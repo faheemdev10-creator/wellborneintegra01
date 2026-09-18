@@ -2223,7 +2223,7 @@ function TopBar({ title, accent, user, onMenuClick, onOpenCall, callActive, ring
           {title}
         </h1>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, position: 'relative', zIndex: 1 }}>
+      <div className="wb-topbar-luxe-actions" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, position: 'relative', zIndex: 1 }}>
         <button
           onClick={toggleFullscreen}
           className="wb-topbar-luxe-icon-btn"
@@ -16636,6 +16636,22 @@ function PremiumStyles() {
       .wb-topbar-luxe-icon-btn:focus-visible {
         outline: none;
         box-shadow: 0 0 0 2px rgba(242,217,153,0.45);
+      }
+      /* Mobile top bar: the fixed 18px/32px padding and 16px icon gap
+         were sized for a 4th icon-button (fullscreen) alongside phone,
+         bell and avatar on desktop widths. Below 860px we tighten both
+         so the title still has room to breathe instead of being
+         squeezed into a sliver of ellipsis text; below 480px the icon
+         buttons themselves shrink a touch so all of them still fit on
+         one line without wrapping to a second row. */
+      @media (max-width: 860px) {
+        .wb-topbar-luxe { padding: 14px 16px !important; }
+        .wb-topbar-luxe-actions { gap: 8px !important; }
+      }
+      @media (max-width: 480px) {
+        .wb-topbar-luxe-icon-btn { width: 32px !important; height: 32px !important; border-radius: 9px !important; }
+        .wb-topbar-luxe-avatar { width: 30px !important; height: 30px !important; font-size: 10px !important; }
+        .wb-topbar-luxe-title { font-size: 18px !important; }
       }
       .wb-topbar-luxe-avatar {
         background: linear-gradient(135deg, ${GOLD_LIGHT} 0%, ${GOLD} 60%, ${GOLD_DEEP} 100%);
