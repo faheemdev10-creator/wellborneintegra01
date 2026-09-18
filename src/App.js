@@ -2150,6 +2150,7 @@ function TopBar({ title, accent, user, onMenuClick, onOpenCall, callActive, ring
   const a = accent || DEFAULT_ACCENT;
   const bellRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+  const [fsAnimate, setFsAnimate] = useState(false);
 
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
@@ -2158,6 +2159,12 @@ function TopBar({ title, accent, user, onMenuClick, onOpenCall, callActive, ring
   }, []);
 
   const toggleFullscreen = () => {
+    // The little rotate-and-settle animation on this button is defined
+    // only inside the ≤860px media query below, so on desktop this class
+    // is added the same way but simply has no matching keyframes — the
+    // click just does its job with no visual flourish there.
+    setFsAnimate(true);
+    setTimeout(() => setFsAnimate(false), 420);
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen?.().catch(() => {});
     } else {
@@ -2226,7 +2233,7 @@ function TopBar({ title, accent, user, onMenuClick, onOpenCall, callActive, ring
       <div className="wb-topbar-luxe-actions" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, position: 'relative', zIndex: 1 }}>
         <button
           onClick={toggleFullscreen}
-          className="wb-topbar-luxe-icon-btn"
+          className={`wb-topbar-luxe-icon-btn${fsAnimate ? ' wb-fullscreen-btn-animate' : ''}`}
           aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
           title={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
         >
@@ -16663,6 +16670,20 @@ function PremiumStyles() {
       @media (max-width: 860px) {
         .wb-topbar-luxe { padding: 14px 16px !important; }
         .wb-topbar-luxe-actions { gap: 8px !important; }
+
+        /* Fullscreen icon-button flourish — phone only. The button gets
+           this class for a moment on every tap regardless of screen
+           size, but the keyframes only exist inside this breakpoint, so
+           desktop clicks stay flourish-free. */
+        @keyframes wb-fullscreen-pulse {
+          0%   { transform: scale(1) rotate(0deg); }
+          45%  { transform: scale(0.82) rotate(-14deg); }
+          75%  { transform: scale(1.08) rotate(4deg); }
+          100% { transform: scale(1) rotate(0deg); }
+        }
+        .wb-fullscreen-btn-animate {
+          animation: wb-fullscreen-pulse 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
       }
       @media (max-width: 480px) {
         .wb-topbar-luxe-icon-btn { width: 32px !important; height: 32px !important; border-radius: 9px !important; }
