@@ -62,6 +62,8 @@ import {
   PhoneIncoming,
   Mic,
   MicOff,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 
 const INK = '#0A1220';
@@ -2147,6 +2149,22 @@ function NotificationPanel({ items, onSelect, onClose, anchorRef }) {
 function TopBar({ title, accent, user, onMenuClick, onOpenCall, callActive, ringing, onOpenInbox, notifPanelOpen, notificationItems, onToggleNotif, onSelectNotifItem, onCloseNotifPanel }) {
   const a = accent || DEFAULT_ACCENT;
   const bellRef = useRef(null);
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  };
+
   return (
     <div
       className="wb-topbar-luxe"
@@ -2206,6 +2224,14 @@ function TopBar({ title, accent, user, onMenuClick, onOpenCall, callActive, ring
         </h1>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, position: 'relative', zIndex: 1 }}>
+        <button
+          onClick={toggleFullscreen}
+          className="wb-topbar-luxe-icon-btn"
+          aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
+          title={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
+        >
+          {isFullscreen ? <Minimize2 size={16} color={a.light} /> : <Maximize2 size={16} color={a.light} />}
+        </button>
         {onOpenCall && (
           <button
             onClick={onOpenCall}
