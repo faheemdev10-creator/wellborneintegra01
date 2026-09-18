@@ -14288,7 +14288,23 @@ function PremiumStyles() {
 
       ::selection { background: rgba(201,165,92,0.28); color: #0A1220; }
 
-      html, body, #root { max-width: 100%; overflow-x: hidden; }
+      /* Browsers apply an 8px default margin to <body>, which shows as a
+         thin white border around the app shell on every side — most
+         noticeable on mobile once the browser chrome is hidden (fullscreen
+         or an installed PWA), since there's no address bar to draw
+         attention away from it. Zeroing margin/padding here and matching
+         the background to the app shell's own cream tone removes it, and
+         also stops a flash of plain white behind the shell during load or
+         iOS's elastic overscroll bounce. */
+      html, body, #root {
+        margin: 0;
+        padding: 0;
+        max-width: 100%;
+        width: 100%;
+        min-height: 100%;
+        overflow-x: hidden;
+        background: #FAF7EF;
+      }
 
       button { transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease, background 0.18s ease; }
       button:not(:disabled):hover {
