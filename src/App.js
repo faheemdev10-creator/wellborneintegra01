@@ -5804,20 +5804,33 @@ function InventoryHistoryModal({ item, onClose }) {
           {entries.map((h, i) => {
             const received = Number(h.quantityReceived || 0);
             const issued = Number(h.quantityIssued || 0);
+            // Entries created by fn_accept_warehouse_transfer always carry
+            // sentBy (who sent it from Production) — used here purely to
+            // pick out this one entry type for the colourful animated
+            // treatment below, nothing else keys off it.
+            const isProductionTransfer = !!h.sentBy;
             return (
               <div
                 key={i}
+                className={isProductionTransfer ? 'wb-transfer-entry' : ''}
                 style={{
-                  border: `1px solid ${LINE}`,
+                  border: isProductionTransfer ? '1px solid rgba(63,190,142,0.35)' : `1px solid ${LINE}`,
                   borderRadius: '12px',
                   padding: '14px 16px',
                   marginBottom: '12px',
-                  background: i === 0 ? '#FBF3E3' : 'white',
+                  background: isProductionTransfer ? undefined : (i === 0 ? '#FBF3E3' : 'white'),
+                  position: 'relative',
+                  overflow: 'hidden',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                   <div>
                     <p style={{ color: INK, fontSize: '13px', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap' }}>
+                      {isProductionTransfer && (
+                        <span className="wb-transfer-icon" style={{ display: 'inline-flex' }}>
+                          <Truck size={14} />
+                        </span>
+                      )}
                       {h.action}
                       {/* Folio from the register's own FOLIO column, shown
                           right next to the Particulars text it belongs
@@ -5846,6 +5859,23 @@ function InventoryHistoryModal({ item, onClose }) {
                           }}
                         >
                           <ClipboardList size={10} /> VIA REGISTER
+                        </span>
+                      )}
+                      {isProductionTransfer && (
+                        <span
+                          className="wb-transfer-badge"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '9.5px',
+                            fontWeight: 700,
+                            letterSpacing: '0.04em',
+                            borderRadius: '999px',
+                            padding: '2px 8px',
+                          }}
+                        >
+                          <Sparkles size={10} /> FROM PRODUCTION
                         </span>
                       )}
                     </p>
@@ -14502,6 +14532,56 @@ function PremiumStyles() {
       @keyframes wb-pop-in {
         from { transform: scale(0.97) translateY(8px); opacity: 0; }
         to { transform: scale(1) translateY(0); opacity: 1; }
+      }
+
+      /* "Received from Production" history entries — a Warehouse Transfer
+         accepted from Production is a distinct kind of event from a
+         manual stock edit, so it gets its own colourful, gently animated
+         treatment inside InventoryHistoryModal: a slow-shifting rainbow
+         gradient border/background wash and a bouncing truck icon, so it
+         stands out at a glance in a list that's otherwise plain white. */
+      .wb-transfer-entry {
+        background: linear-gradient(120deg, rgba(63,190,142,0.10), rgba(107,155,255,0.10), rgba(242,201,76,0.12), rgba(255,138,128,0.10), rgba(63,190,142,0.10));
+        background-size: 400% 400%;
+        animation: wb-transfer-gradient 8s ease infinite, wb-pop-in 0.24s cubic-bezier(0.16,1,0.3,1);
+      }
+      .wb-transfer-entry::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: 12px;
+        padding: 1.5px;
+        background: linear-gradient(120deg, #3FBE8E, #6B9BFF, #F2C94C, #FF8A80, #3FBE8E);
+        background-size: 400% 400%;
+        animation: wb-transfer-gradient 8s ease infinite;
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        pointer-events: none;
+      }
+      @keyframes wb-transfer-gradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+      .wb-transfer-icon {
+        color: #1F4B3F;
+        animation: wb-transfer-bounce 1.8s ease-in-out infinite;
+      }
+      @keyframes wb-transfer-bounce {
+        0%, 100% { transform: translateX(0); }
+        50% { transform: translateX(2px); }
+      }
+      .wb-transfer-badge {
+        color: white;
+        background: linear-gradient(120deg, #3FBE8E, #6B9BFF, #F2C94C, #FF8A80);
+        background-size: 300% 300%;
+        animation: wb-transfer-gradient 5s ease infinite;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .wb-transfer-entry, .wb-transfer-entry::before, .wb-transfer-icon, .wb-transfer-badge {
+          animation: none !important;
+        }
       }
 
       /* Product Name Autocomplete — colourful drop-down used in         */
