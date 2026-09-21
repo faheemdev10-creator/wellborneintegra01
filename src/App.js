@@ -13700,6 +13700,134 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
   );
 }
 
+// ---------------------------------------------------------------------
+// BATCH-LEVEL IPQ — the IPQ button in the Packing Overview table. IPQ is
+// stored per Daily Packing entry, so putting a batch on hold means putting
+// EVERY packing entry of that batch on IPQ (each one gets the same
+// history line + audit record the per-entry button writes). Resuming
+// does the reverse for all the entries currently on hold. The modal
+// says exactly how many entries it will change before anything happens.
+// ---------------------------------------------------------------------
+function BatchIPQModal({ user, batch, entries, onClose, onSaved }) {
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const mine = (entries || []).filter((e) => e.batch_id === batch.id);
+  const held = mine.filter((e) => e.status === 'IPQ');
+  const isResuming = held.length > 0;
+  const targets = isResuming ? held : mine;
+  const count = targets.length;
+
+  const submit = async () => {
+    setSaving(true);
+    setError('');
+    const results = await Promise.all(
+      targets.map(async (entry) => {
+        const historyEntry = isResuming
+          ? {
+              dept: user.dept,
+              user: user.name,
+              action: 'Resumed from IPQ — back to Logged (whole batch)',
+              at: now(),
+              atISO: nowISO(),
+            }
+          : {
+              dept: user.dept,
+              user: user.name,
+              action: `Marked as IPQ (Holding) — whole batch${reason ? ' — ' + reason : ''}`,
+              at: now(),
+              atISO: nowISO(),
+              ipq: true,
+            };
+        const newHistory = Array.isArray(entry.history) ? [...entry.history, historyEntry] : [historyEntry];
+        const { error: err } = await supabase
+          .from('production_packing_entries')
+          .update({
+            status: isResuming ? 'Logged' : 'IPQ',
+            ipq_reason: isResuming ? null : reason,
+            history: newHistory,
+            updated_at: nowISO(),
+          })
+          .eq('id', entry.id);
+        if (!err) {
+          await logAudit({
+            action: isResuming ? 'Packing Entry Resumed' : 'Packing Entry IPQ',
+            table: 'production_packing_entries',
+            recordId: entry.id,
+            user,
+            newValue: { status: isResuming ? 'Logged' : 'IPQ', reason, wholeBatch: true },
+          });
+        }
+        return err;
+      })
+    );
+    setSaving(false);
+    const firstErr = results.find(Boolean);
+    onSaved();
+    if (firstErr) {
+      setError(firstErr.message);
+      return;
+    }
+    onClose();
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(4,7,17,0.5)' }} />
+      <div style={{ position: 'relative', background: 'white', borderRadius: 14, width: '100%', maxWidth: 460, padding: 24, boxShadow: '0 32px 80px rgba(4,7,17,0.35)' }}>
+        <p style={{ color: isResuming ? '#1F4B3F' : IPQ_RED, fontSize: 15, fontWeight: 700, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {isResuming ? <PlayCircle size={17} /> : <PauseCircle size={17} />}
+          {isResuming ? 'Resume this batch' : 'Put this batch on IPQ — Holding'}
+        </p>
+        <p style={{ color: '#7A7460', fontSize: 13, margin: '0 0 6px' }}>
+          {batch.product_name} — Batch {batch.batch_number}
+        </p>
+        <p style={{ color: '#5C5646', fontSize: 12, margin: '0 0 16px' }}>
+          {count === 0
+            ? 'This batch has no packing entries yet, so there is nothing to change.'
+            : isResuming
+            ? `This will resume the ${count} packing ${count === 1 ? 'entry' : 'entries'} of this batch that ${count === 1 ? 'is' : 'are'} on IPQ hold.`
+            : `This will put all ${count} packing ${count === 1 ? 'entry' : 'entries'} of this batch on IPQ hold.`}
+        </p>
+        {error && <div style={{ background: '#FBEAEA', color: IPQ_RED, fontSize: 12, padding: '8px 10px', borderRadius: 6, marginBottom: 12 }}>{error}</div>}
+
+        {!isResuming && (
+          <>
+            <label style={{ fontSize: 11, color: '#8A8370' }}>Reason for holding this batch</label>
+            <textarea
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Count under review, quality query raised…"
+              style={{ width: '100%', padding: 8, marginTop: 4, marginBottom: 16, border: `1px solid ${IPQ_RED}`, borderRadius: 6, boxSizing: 'border-box' }}
+            />
+          </>
+        )}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            disabled={saving || count === 0}
+            onClick={submit}
+            className={saving || count === 0 ? undefined : 'wb-ipq-fx'}
+            style={{
+              background: saving || count === 0 ? '#D8D2C0' : isResuming ? '#1F4B3F' : IPQ_RED,
+              color: 'white',
+              border: 'none',
+              padding: '9px 16px',
+              borderRadius: 8,
+              cursor: saving || count === 0 ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            {saving ? 'Saving…' : isResuming ? 'Confirm — Resume' : 'Confirm — Mark as IPQ'}
+          </button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#7A7460', cursor: 'pointer' }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Small helpers for the Packing Overview table ---------------------------
 // Avatar gradients: a product always gets the same colour (hashed from
 // its name), which makes rows quick to tell apart at a glance.
@@ -13742,7 +13870,7 @@ function poFmtPct(pct) {
 // All motion here is transform/opacity only (cheap for the browser) and
 // is switched off for anyone with "reduce motion" turned on.
 // ---------------------------------------------------------------------
-function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkCompleted, onDeleteBatch }) {
+function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, onMarkCompleted, onDeleteBatch, onIpqClick }) {
   const canManage = canManageProduction(user);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -13765,7 +13893,20 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
     return { total: batches.length, done, active: batches.length - done };
   }, [batches]);
 
-  // All three row actions share one base style with FIXED widths, so
+  // How many packing entries each batch has, and how many are on IPQ
+  // hold — drives the IPQ / Resume button and the red "Active · IPQ" badge.
+  const ipqByBatch = useMemo(() => {
+    const m = {};
+    for (let i = 0; i < entries.length; i += 1) {
+      const e = entries[i];
+      if (!m[e.batch_id]) m[e.batch_id] = { held: 0, logged: 0 };
+      if (e.status === 'IPQ') m[e.batch_id].held += 1;
+      else m[e.batch_id].logged += 1;
+    }
+    return m;
+  }, [entries]);
+
+  // All row actions share one base style with FIXED widths, so
   // Mark Completed / Send to Warehouse / Delete always sit on a single
   // line and line up in the same columns on every row (Completed rows
   // keep an empty slot where Mark Completed would be).
@@ -13774,15 +13915,15 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    padding: '7px 12px',
+    padding: '7px 10px',
     borderRadius: 8,
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: 600,
     flexShrink: 0,
     whiteSpace: 'nowrap',
     boxSizing: 'border-box',
   };
-  const th = { padding: '13px 16px', fontSize: 11, color: '#8A8370', fontWeight: 700, letterSpacing: '0.03em' };
+  const th = { padding: '12px 10px', fontSize: 11, color: '#8A8370', fontWeight: 700, letterSpacing: '0.03em' };
   const stat = (color, bg) => ({ color, background: bg });
 
   return (
@@ -13816,13 +13957,13 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
               <tr className="wb-po-thead" style={{ textAlign: 'left' }}>
                 <th style={th}>Product Name</th>
                 <th style={th}>Batch No.</th>
-                <th style={th}>Batch Size (Packs)</th>
+                <th style={{ ...th, minWidth: 92 }}>Batch Size (Packs)</th>
                 <th style={th}>Total Packed</th>
                 <th style={th}>Remaining to Pack</th>
                 <th style={th}>Sent to Warehouse</th>
                 <th style={th}>Remaining to Send</th>
                 <th style={th}>Status</th>
-                {canManage && <th style={th}> </th>}
+                {canManage && <th className="wb-po-actions-th" style={th}> </th>}
               </tr>
             </thead>
             <tbody>
@@ -13840,13 +13981,16 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
                 const palette = PO_PALETTE[poHash(b.product_name || '') % PO_PALETTE.length];
                 const remainingToPack = Number(b.remainingToPack);
                 const remainingToSend = Number(b.remainingToSend);
+                const ip = ipqByBatch[b.id] || { held: 0, logged: 0 };
+                const onHold = ip.held > 0;
+                const canIpq = onHold || (b.status === 'Active' && ip.logged > 0);
                 return (
                   <tr
                     key={b.id}
                     className="wb-po-row"
-                    style={{ '--i': Math.min(idx, 14), '--po-accent': tier.accent, borderTop: `1px solid ${LINE}` }}
+                    style={{ '--i': Math.min(idx, 14), '--po-accent': onHold ? '#C0392B' : tier.accent, borderTop: `1px solid ${LINE}` }}
                   >
-                    <td style={{ padding: '13px 16px', minWidth: 190 }}>
+                    <td style={{ padding: '12px 10px', minWidth: 160 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span className="wb-po-avatar" style={{ background: `linear-gradient(135deg, ${palette[0]}, ${palette[1]})` }}>
                           {(b.product_name || '?').trim().charAt(0).toUpperCase()}
@@ -13854,11 +13998,11 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
                         <span style={{ color: INK, fontWeight: 600 }}>{b.product_name}</span>
                       </div>
                     </td>
-                    <td style={{ padding: '13px 16px' }}>
+                    <td style={{ padding: '12px 10px' }}>
                       <span className="wb-po-batchno">{b.batch_number}</span>
                     </td>
-                    <td style={{ padding: '13px 16px', color: '#7A7460', fontVariantNumeric: 'tabular-nums' }}>{b.batch_size}</td>
-                    <td style={{ padding: '13px 16px', minWidth: 170 }}>
+                    <td style={{ padding: '12px 10px', color: '#7A7460', fontVariantNumeric: 'tabular-nums' }}>{b.batch_size}</td>
+                    <td style={{ padding: '12px 10px', minWidth: 140 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ color: INK, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{b.total_packed}</span>
                         <span className="wb-po-pct" style={{ color: tier.color, background: tier.soft }}>{poFmtPct(pct)}</span>
@@ -13870,7 +14014,7 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
                         />
                       </div>
                     </td>
-                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       {done ? (
                         <span className="wb-po-chip wb-po-chip-done"><CheckCircle2 size={13} /> Completed</span>
                       ) : (
@@ -13882,12 +14026,12 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       <span className="wb-po-chip" style={{ color: '#0F6F8A', background: '#DDF1F7' }}>
                         <Truck size={13} /> {b.alreadySent}
                       </span>
                     </td>
-                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       <span
                         className="wb-po-chip"
                         style={remainingToSend > 0 ? { color: IPQ_RED, background: '#FBE4E4' } : { color: '#1F6B52', background: '#DDF3E8' }}
@@ -13895,42 +14039,65 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
                         {b.remainingToSend} remaining
                       </span>
                     </td>
-                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       {done ? (
                         <span className="wb-po-status wb-po-status-done"><CheckCircle2 size={12} /> {b.status}</span>
                       ) : (
-                        <span className="wb-po-status wb-po-status-active"><i className="wb-po-dot" /> {b.status}</span>
+                        onHold ? (
+                          <span className="wb-po-status wb-ipq-badge" style={{ color: IPQ_RED, background: 'linear-gradient(135deg, #FDECEC, #F8D4D4)' }}>
+                            <PauseCircle size={12} /> {b.status} · IPQ
+                          </span>
+                        ) : (
+                          <span className="wb-po-status wb-po-status-active"><i className="wb-po-dot" /> {b.status}</span>
+                        )
                       )}
                     </td>
                     {canManage && (
-                      <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
+                      <td className="wb-po-actions" style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap' }}>
                           {b.status === 'Active' ? (
                             <button
                               onClick={() => onMarkCompleted(b)}
                               title={readyToComplete ? 'Mark this batch Completed' : `Still ${size - packed} packs left to pack — you can still mark it complete manually`}
                               className={`wb-po-btn ${readyToComplete ? 'wb-po-btn-complete-ready' : 'wb-po-btn-complete'}`}
-                              style={{ ...btnBase, width: 142 }}
+                              style={{ ...btnBase, width: 128 }}
                             >
                               <CheckCircle2 size={13} /> Mark Completed
                             </button>
                           ) : (
-                            <span aria-hidden="true" style={{ width: 142, flexShrink: 0 }} />
+                            <span aria-hidden="true" style={{ width: 128, flexShrink: 0 }} />
                           )}
                           <button
                             onClick={() => onSendToWarehouse(b)}
                             disabled={remainingToSend <= 0}
                             title={remainingToSend <= 0 ? (packed <= 0 ? 'Nothing packed yet for this batch' : 'Everything packed so far has already been sent') : `Send the ${b.remainingToSend} packs not yet sent`}
                             className="wb-po-btn wb-po-btn-send"
-                            style={{ ...btnBase, width: 160 }}
+                            style={{ ...btnBase, width: 146 }}
                           >
                             <Truck size={13} /> Send to Warehouse
                           </button>
+                          {canIpq ? (
+                            <button
+                              onClick={() => onIpqClick && onIpqClick(b)}
+                              title={
+                                onHold
+                                  ? `Resume the ${ip.held} packing ${ip.held === 1 ? 'entry' : 'entries'} of this batch held on IPQ`
+                                  : `Put this batch's ${ip.logged} packing ${ip.logged === 1 ? 'entry' : 'entries'} on IPQ hold`
+                              }
+                              className={`wb-ipq-fx wb-ipq-btn ${onHold ? 'wb-ipq-btn-resume' : ''}`}
+                              style={{ width: 84, justifyContent: 'center', padding: '7px 8px', borderRadius: 8, fontSize: 11.5, boxSizing: 'border-box', flexShrink: 0 }}
+                            >
+                              {onHold ? <PlayCircle size={13} /> : <PauseCircle size={13} />}
+                              <span>{onHold ? 'Resume' : 'IPQ'}</span>
+                            </button>
+                          ) : (
+                            <span aria-hidden="true" style={{ width: 84, flexShrink: 0 }} />
+                          )}
                           <button
                             onClick={() => onDeleteBatch(b)}
                             title="Delete this batch"
                             className="wb-po-btn wb-po-btn-del"
-                            style={{ ...btnBase, width: 92 }}
+                            style={{ ...btnBase, width: 80 }}
                           >
                             <Trash2 size={13} /> Delete
                           </button>
@@ -14087,6 +14254,7 @@ function ProductionInventoryPageInner({ user }) {
   const [packingModalOpen, setPackingModalOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null);
   const [ipqEntry, setIpqEntry] = useState(null);
+  const [ipqBatch, setIpqBatch] = useState(null);
   const [historyEntry, setHistoryEntry] = useState(null);
   const [sendToWarehouseBatch, setSendToWarehouseBatch] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
@@ -14402,6 +14570,8 @@ const ch3 = supabase
       <BatchesOverviewTable
         user={user}
         batches={batchesWithSendInfo}
+        entries={entries}
+        onIpqClick={(b) => setIpqBatch(b)}
         onSendToWarehouse={(b) => setSendToWarehouseBatch(b)}
         onMarkCompleted={handleMarkCompleted}
         onDeleteBatch={handleDeleteBatch}
@@ -14414,6 +14584,15 @@ const ch3 = supabase
           entry={editingEntry}
           onClose={() => { setPackingModalOpen(false); setEditingEntry(null); }}
           onSaved={() => { loadEntries(); loadBatches(); }}
+        />
+      )}
+      {ipqBatch && (
+        <BatchIPQModal
+          user={user}
+          batch={ipqBatch}
+          entries={entries}
+          onClose={() => setIpqBatch(null)}
+          onSaved={loadEntries}
         />
       )}
       {ipqEntry && (
@@ -14771,7 +14950,7 @@ function PremiumStyles() {
         font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
         font-variant-numeric: tabular-nums;
       }
-      .wb-po-bar { width: 130px; height: 8px; margin-top: 7px; border-radius: 999px; background: #EFE8D6; overflow: hidden; }
+      .wb-po-bar { width: 110px; height: 8px; margin-top: 7px; border-radius: 999px; background: #EFE8D6; overflow: hidden; }
       .wb-po-fill {
         position: relative; height: 100%; border-radius: 999px; overflow: hidden;
         transform-origin: left center;
@@ -14790,7 +14969,7 @@ function PremiumStyles() {
 
       .wb-po-chip {
         display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-        font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+        font-size: 11.5px; font-weight: 600; padding: 4px 9px; border-radius: 999px;
         font-variant-numeric: tabular-nums;
       }
       .wb-po-chip-done {
@@ -14809,6 +14988,17 @@ function PremiumStyles() {
         animation: wb-po-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
       }
       @keyframes wb-po-ping { 0% { transform: scale(1); opacity: 0.7; } 75%, 100% { transform: scale(2.6); opacity: 0; } }
+
+      /* Actions column stays pinned to the right edge, so the buttons are
+         always reachable even when the table is wider than the screen and
+         has to scroll sideways. */
+      .wb-po-actions, .wb-po-actions-th {
+        position: sticky; right: 0; z-index: 1;
+        box-shadow: -8px 0 10px -9px rgba(10, 18, 32, 0.16);
+      }
+      .wb-po-actions { background: white; transition: background 0.2s ease; }
+      .wb-po-actions-th { background: #F8F3E4; }
+      .wb-po-row:hover .wb-po-actions { background: #FBF6E8; }
 
       .wb-po-btn { color: white; border: none; cursor: pointer; }
       .wb-po-btn-complete { background: linear-gradient(135deg, #B8923F, #E3C27A); box-shadow: 0 3px 10px rgba(201, 165, 92, 0.38); }
