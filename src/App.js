@@ -2666,7 +2666,7 @@ function ProductionSnapshotCard({ onOpenProduction }) {
   const loadAll = useCallback(async () => {
     const [b, e, t] = await Promise.all([
       supabase
-        .from('production_batch_status')
+        .from('production_batches')
         .select('*')
         .order('created_at', { ascending: false }),
       supabase
@@ -14860,7 +14860,7 @@ function ProductionInventoryPageInner({ user }) {
   const canReceive = canReceiveWarehouse(user);
   const loadBatches = useCallback(async () => {
     const { data, error } = await supabase
-      .from('production_batch_status')
+      .from('production_batches')
       .select('*')
       .order('created_at', { ascending: false });
     if (error) {
