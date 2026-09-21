@@ -69,6 +69,7 @@ import {
   Banknote,
   Siren,
   UserCheck,
+  Printer,
 } from 'lucide-react';
 
 const INK = '#0A1220';
@@ -8367,13 +8368,222 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
 }
 
 // ---------------------------------------------------------------------
-// HSE HERO — a bold, animated red-toned command header for Health &
-// Safety. Deliberately its own colour language (deep alarm-red/coral,
-// vs. the department's soft red dashboard tile) so the page reads as
-// "this matters" the moment it opens: a drifting red glow field, a
-// slow-orbiting shield badge, and a scatter of small floating safety
-// icons (hazard triangle, activity pulse, clipboard) drifting gently
-// in the background.
+// HSE LUXE — the Health & Safety page, rebuilt as a luxury animated
+// command deck. Everything below is deliberately cheap to render:
+//   - all motion is CSS transform/opacity (GPU-composited, no layout);
+//   - no backdrop-filter and no animated blur anywhere;
+//   - count-up numbers run one short requestAnimationFrame burst, then stop;
+//   - record cards are React.memo'd, stagger is capped at 10 steps, and
+//     content-visibility:auto lets the browser skip offscreen cards;
+//   - every animation switches off under prefers-reduced-motion.
+// Records open (click a card) into a details panel, and everything can be
+// downloaded: per-record CSV, per-section CSV, all-records CSV, and a
+// print-ready PDF report.
+// ---------------------------------------------------------------------
+
+const HZ_YMD = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+// "Rs 5,000" / "5000" / 5000  ->  5000
+function hzMoney(v) {
+  const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Short count-up from the previous value to the new one.
+function useHzCountUp(target, duration = 900) {
+  const t = Number(target) || 0;
+  const [val, setVal] = useState(0);
+  const fromRef = useRef(0);
+  useEffect(() => {
+    const reduce =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || t === fromRef.current) {
+      fromRef.current = t;
+      setVal(t);
+      return undefined;
+    }
+    const from = fromRef.current;
+    let raf;
+    let start = null;
+    const tick = (ts) => {
+      if (start === null) start = ts;
+      const p = Math.min(1, (ts - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setVal(Math.round(from + (t - from) * eased));
+      if (p < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = t;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [t, duration]);
+  return val;
+}
+
+function HzNum({ value, duration }) {
+  const n = useHzCountUp(value, duration);
+  return <>{n.toLocaleString()}</>;
+}
+
+// Per-category look. a1/a2 = gradient pair, soft = pale tint.
+const HZ_META = {
+  riskAssessments: { label: 'Risk Assessments', addLabel: 'Risk Assessment', icon: ClipboardList, a1: '#B9791F', a2: '#E9B44C', soft: '#FBEBC8' },
+  incidents: { label: 'Incidents', addLabel: 'Incident', icon: AlertTriangle, a1: '#B23A3A', a2: '#EF7B6E', soft: '#FBEAEA' },
+  permits: { label: 'Permits to Work', addLabel: 'Permit', icon: Stamp, a1: '#5B4BD6', a2: '#9A8CFA', soft: '#ECE9FE' },
+  ppeIssued: { label: 'PPE Issued', addLabel: 'PPE Issued', icon: HardHat, a1: '#1F6B52', a2: '#3FBF8F', soft: '#E3F5EC' },
+  ppeWarnings: { label: 'Warnings', addLabel: 'Warning', icon: Siren, a1: '#B36A16', a2: '#F2A93B', soft: '#FBEBC8' },
+  ppeFines: { label: 'Fines', addLabel: 'Fine', icon: Banknote, a1: '#B23A3A', a2: '#E5665B', soft: '#FBEAEA' },
+};
+
+const HSE_TABS = [
+  { key: 'riskAssessments', label: 'Risk Assessments', icon: ClipboardList, meta: HZ_META.riskAssessments },
+  { key: 'incidents', label: 'Incidents', icon: AlertTriangle, meta: HZ_META.incidents },
+  { key: 'permits', label: 'Permits to Work', icon: Stamp, meta: HZ_META.permits },
+  { key: 'ppe', label: 'PPE & Compliance', icon: HardHat, meta: HZ_META.ppeIssued },
+];
+
+// The three record categories that live inside the "PPE & Compliance" tab.
+const PPE_SECTIONS = ['ppeIssued', 'ppeWarnings', 'ppeFines'].map((category) => ({
+  category,
+  ...HZ_META[category],
+}));
+
+const HSE_BLANK_FORM = {
+  title: '',
+  area: '',
+  level: 'Medium',
+  rating: '',
+  severity: 'Minor',
+  status: 'Open',
+  type: '',
+  date: '',
+  category: '',
+  workerName: '',
+  issuedBy: '',
+  fineAmount: '',
+};
+
+// ---- Downloads -------------------------------------------------------
+const HZ_COLS = {
+  riskAssessments: [['id', 'ID'], ['title', 'Title'], ['area', 'Area'], ['level', 'Risk level'], ['rating', 'Rating'], ['status', 'Status'], ['date', 'Date']],
+  incidents: [['id', 'ID'], ['title', 'Title'], ['area', 'Area'], ['severity', 'Severity'], ['status', 'Status'], ['date', 'Date']],
+  permits: [['id', 'ID'], ['title', 'Title'], ['area', 'Area'], ['type', 'Permit type'], ['status', 'Status'], ['date', 'Date']],
+  ppeIssued: [['id', 'ID'], ['title', 'PPE issued'], ['workerName', 'Worker'], ['issuedBy', 'Issued by'], ['date', 'Date']],
+  ppeWarnings: [['id', 'ID'], ['title', 'Reason'], ['workerName', 'Worker'], ['issuedBy', 'Issued by'], ['date', 'Date']],
+  ppeFines: [['id', 'ID'], ['title', 'Reason'], ['workerName', 'Worker'], ['issuedBy', 'Issued by'], ['fineAmount', 'Fine amount'], ['date', 'Date']],
+};
+const HZ_ORDER = ['riskAssessments', 'incidents', 'permits', 'ppeIssued', 'ppeWarnings', 'ppeFines'];
+
+function hzCell(v) {
+  let s = String(v ?? '');
+  // Stop spreadsheet apps from treating text as a formula.
+  if (/^[=+\-@]/.test(s) && Number.isNaN(Number(s))) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function hzSaveFile(filename, mime, content) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function hzExportCsv(category, rows, nameHint) {
+  const cols = HZ_COLS[category];
+  const head = cols.map((c) => hzCell(c[1])).join(',');
+  const body = rows.map((r) => cols.map((c) => hzCell(r[c[0]])).join(',')).join('\r\n');
+  const file = `ipq-hse-${nameHint || category}-${HZ_YMD(new Date())}.csv`;
+  // BOM so Excel opens UTF-8 (names, symbols) correctly.
+  hzSaveFile(file, 'text/csv;charset=utf-8;', '\uFEFF' + head + '\r\n' + body);
+}
+
+function hzExportAllCsv(hse) {
+  const keys = [['id', 'ID'], ['title', 'Title / Reason'], ['workerName', 'Worker'], ['issuedBy', 'Issued by'], ['area', 'Area'], ['type', 'Permit type'], ['level', 'Risk level'], ['rating', 'Rating'], ['severity', 'Severity'], ['status', 'Status'], ['fineAmount', 'Fine amount'], ['date', 'Date']];
+  const head = [hzCell('Category'), ...keys.map((k) => hzCell(k[1]))].join(',');
+  const lines = [];
+  HZ_ORDER.forEach((cat) => {
+    (hse[cat] || []).forEach((r) => {
+      lines.push([hzCell(HZ_META[cat].label), ...keys.map((k) => hzCell(r[k[0]]))].join(','));
+    });
+  });
+  hzSaveFile(`ipq-hse-all-records-${HZ_YMD(new Date())}.csv`, 'text/csv;charset=utf-8;', '\uFEFF' + head + '\r\n' + lines.join('\r\n'));
+}
+
+function hzEsc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function hzReportHtml(hse) {
+  const total = HZ_ORDER.reduce((n, c) => n + (hse[c] || []).length, 0);
+  const fineTotal = (hse.ppeFines || []).reduce((n, r) => n + hzMoney(r.fineAmount), 0);
+  const blocks = HZ_ORDER.map((cat) => {
+    const rows = hse[cat] || [];
+    const cols = HZ_COLS[cat];
+    const table = rows.length
+      ? `<table><thead><tr>${cols.map((c) => `<th>${hzEsc(c[1])}</th>`).join('')}</tr></thead><tbody>${rows
+          .map((r) => `<tr>${cols.map((c) => `<td>${hzEsc(r[c[0]])}</td>`).join('')}</tr>`)
+          .join('')}</tbody></table>`
+      : '<p class="empty">No records.</p>';
+    return `<section><h2><i style="background:${HZ_META[cat].a1}"></i>${hzEsc(HZ_META[cat].label)}<b>${rows.length}</b></h2>${table}</section>`;
+  }).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>HSE Report — ${HZ_YMD(new Date())}</title>
+<style>
+@page{margin:14mm}
+*{box-sizing:border-box}
+body{font-family:Inter,Segoe UI,Arial,sans-serif;color:#0A1220;margin:0;padding:28px;background:#fff}
+header{border-radius:16px;padding:22px 26px;color:#fff;background:linear-gradient(135deg,#3a0f16,#14090d);border:1px solid #C9A55C;margin-bottom:22px}
+header h1{margin:0 0 4px;font-family:'Playfair Display',Georgia,serif;font-size:26px;color:#F2D999}
+header p{margin:0;font-size:12.5px;opacity:.85}
+.kpis{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.kpis span{background:rgba(255,255,255,.12);border:1px solid rgba(242,217,153,.35);border-radius:999px;padding:6px 12px;font-size:12px}
+section{margin-bottom:22px;break-inside:auto}
+h2{display:flex;align-items:center;gap:8px;font-family:'Playfair Display',Georgia,serif;font-size:17px;margin:0 0 8px}
+h2 i{width:10px;height:10px;border-radius:50%;display:inline-block}
+h2 b{font-family:Inter,Arial,sans-serif;font-size:11px;background:#F4EEDC;border-radius:999px;padding:2px 9px}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{background:#FAF7EF;text-align:left;padding:7px 9px;border-bottom:2px solid #C9A55C;font-weight:700}
+td{padding:6px 9px;border-bottom:1px solid #E9E2D0}
+tr{page-break-inside:avoid}
+.empty{color:#9C9585;font-size:12px;margin:0}
+footer{margin-top:18px;font-size:10.5px;color:#9C9585;text-align:center}
+</style></head><body>
+<header><h1>Health &amp; Safety Report</h1><p>Generated ${hzEsc(new Date().toLocaleString())}</p>
+<div class="kpis"><span>${total} total records</span><span>${(hse.ppeIssued || []).length} PPE issued</span><span>${(hse.ppeWarnings || []).length} warnings</span><span>${(hse.ppeFines || []).length} fines · ${fineTotal.toLocaleString()}</span></div></header>
+${blocks}
+<footer>IPQ Portal · Health &amp; Safety</footer>
+</body></html>`;
+}
+
+function hzOpenReport(hse) {
+  const html = hzReportHtml(hse);
+  const w = window.open('', '_blank');
+  if (!w) {
+    // Popup blocked — fall back to a downloadable HTML file (opens in any browser, print to PDF from there).
+    hzSaveFile(`ipq-hse-report-${HZ_YMD(new Date())}.html`, 'text/html;charset=utf-8;', html);
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(() => {
+    try { w.print(); } catch (e) { /* user can print manually */ }
+  }, 450);
+}
+
+// ---------------------------------------------------------------------
+// HERO
 // ---------------------------------------------------------------------
 function HSEHero({ hse }) {
   const allHse = [
@@ -8396,51 +8606,68 @@ function HSEHero({ hse }) {
   ];
 
   const floatIcons = [
-    { Icon: ShieldAlert, top: '10%', left: '62%', delay: '0s', size: 22 },
-    { Icon: AlertTriangle, top: '58%', left: '78%', delay: '1.4s', size: 18 },
-    { Icon: Activity, top: '70%', left: '54%', delay: '2.6s', size: 16 },
-    { Icon: ClipboardList, top: '22%', left: '84%', delay: '0.8s', size: 16 },
+    { Icon: ShieldAlert, top: '12%', left: '56%', delay: '0s', size: 22 },
+    { Icon: HardHat, top: '62%', left: '68%', delay: '1.1s', size: 20 },
+    { Icon: Siren, top: '20%', left: '76%', delay: '2s', size: 18 },
+    { Icon: Activity, top: '72%', left: '50%', delay: '2.8s', size: 16 },
+    { Icon: Stamp, top: '44%', left: '84%', delay: '0.7s', size: 16 },
+    { Icon: Sparkles, top: '8%', left: '42%', delay: '1.7s', size: 14 },
+  ];
+  const twinkles = [
+    ['14%', '34%', '0s'], ['30%', '62%', '0.8s'], ['54%', '90%', '1.4s'], ['80%', '38%', '2.1s'],
+    ['66%', '80%', '0.4s'], ['22%', '92%', '1.9s'], ['88%', '64%', '1.1s'],
   ];
 
   return (
-    <div className="wb-hse-hero">
-      <div className="wb-hse-hero-gridlines" />
-      <div className="wb-hse-hero-glow-a" />
-      <div className="wb-hse-hero-glow-b" />
-      <div className="wb-hse-hero-glow-c" />
+    <div className="wb-hz-hero">
+      <div className="wb-hz-grid" />
+      <div className="wb-hz-blob wb-hz-blob-a" />
+      <div className="wb-hz-blob wb-hz-blob-b" />
+      <div className="wb-hz-blob wb-hz-blob-c" />
+      <div className="wb-hz-sweep" />
+      {twinkles.map((t, i) => (
+        <span key={i} className="wb-hz-twinkle" style={{ top: t[0], left: t[1], animationDelay: t[2] }} />
+      ))}
       {floatIcons.map((f, i) => (
-        <div
-          key={i}
-          className="wb-hse-float-icon"
-          style={{ top: f.top, left: f.left, animationDelay: f.delay }}
-        >
-          <f.Icon size={f.size} color="rgba(255,255,255,0.85)" />
+        <div key={i} className="wb-hz-float" style={{ top: f.top, left: f.left, animationDelay: f.delay }}>
+          <f.Icon size={f.size} color="rgba(242,217,153,0.8)" />
         </div>
       ))}
 
-      <div className="wb-hse-hero-orbit">
-        <div className="wb-hse-hero-badge">
-          <ShieldAlert size={30} color="#fff" />
+      <div className="wb-hz-orbit">
+        <span className="wb-hz-ring wb-hz-ring-a" />
+        <span className="wb-hz-ring wb-hz-ring-b" />
+        <div className="wb-hz-badge">
+          <ShieldAlert size={28} color="#F2D999" />
         </div>
       </div>
 
-      <div className="wb-hse-hero-top">
-        <div className="wb-hse-hero-eyebrow">
-          <span className="wb-hse-live-dot" />
+      <div className="wb-hz-hero-top">
+        <div className="wb-hz-eyebrow">
+          <span className="wb-hz-live" />
           <span>{todayLabel()}</span>
+          <span className="wb-hz-crown"><Sparkles size={11} /> HSE Command</span>
         </div>
-        <h2 className="wb-serif wb-hse-hero-title">Health &amp; Safety</h2>
-        <p className="wb-hse-hero-sub">
-          Risk assessments, incidents and permits to work — live across every department.
+        <h2 className="wb-serif wb-hz-title">Health &amp; Safety</h2>
+        <p className="wb-hz-sub">
+          Risk assessments, incidents, permits and PPE compliance — live across every department.
         </p>
+        <div className="wb-hz-hero-actions">
+          <button type="button" className="wb-hz-btn wb-hz-btn-gold" onClick={() => hzExportAllCsv(hse)}>
+            <Download size={14} /> Download all (CSV)
+          </button>
+          <button type="button" className="wb-hz-btn wb-hz-btn-glass" onClick={() => hzOpenReport(hse)}>
+            <Printer size={14} /> PDF report
+          </button>
+        </div>
       </div>
 
-      <div className="wb-hse-hero-figures">
-        {figures.map((f) => (
-          <div key={f.label} className={`wb-hse-fig${f.alert ? ' wb-hse-fig-alert' : ''}`}>
-            <f.icon size={16} />
-            <span className="wb-hse-fig-value">{f.value}</span>
-            <span className="wb-hse-fig-label">{f.label}</span>
+      <div className="wb-hz-stats">
+        {figures.map((f, i) => (
+          <div key={f.label} className={`wb-hz-stat${f.alert ? ' wb-hz-stat-alert' : ''}`} style={{ '--d': `${120 + i * 70}ms` }}>
+            <span className="wb-hz-stat-icon"><f.icon size={15} /></span>
+            <span className="wb-hz-stat-value"><HzNum value={f.value} /></span>
+            <span className="wb-hz-stat-label">{f.label}</span>
           </div>
         ))}
       </div>
@@ -8448,74 +8675,339 @@ function HSEHero({ hse }) {
   );
 }
 
-const HSE_TABS = [
-  { key: 'riskAssessments', label: 'Risk Assessments', icon: ClipboardList },
-  { key: 'incidents', label: 'Incidents', icon: AlertTriangle },
-  { key: 'permits', label: 'Permits to Work', icon: Stamp },
-  { key: 'ppe', label: 'PPE & Compliance', icon: HardHat },
+// ---------------------------------------------------------------------
+// RECORD CARD — click to open a details panel.
+// ---------------------------------------------------------------------
+const HZ_FIELDS = [
+  ['id', 'Record ID'], ['workerName', 'Worker'], ['issuedBy', 'Issued by'], ['area', 'Area'],
+  ['type', 'Type'], ['level', 'Risk level'], ['rating', 'Rating'], ['severity', 'Severity'],
+  ['status', 'Status'], ['fineAmount', 'Fine amount'], ['date', 'Date'],
 ];
 
-// The three record categories that live inside the "PPE & Compliance" tab.
-// Each has its own icon, colour accent and "+ Add" action, but all three
-// are stored in the same hse_records table as everything else — just
-// under their own `category` value.
-const PPE_SECTIONS = [
-  { category: 'ppeIssued', label: 'PPE Issued', addLabel: 'PPE Issued', icon: HardHat, accent: '#1F6B52', softBg: '#E3F5EC' },
-  { category: 'ppeWarnings', label: 'Warnings', addLabel: 'Warning', icon: Siren, accent: '#8C5A1E', softBg: '#FBEBC8' },
-  { category: 'ppeFines', label: 'Fines', addLabel: 'Fine', icon: Banknote, accent: IPQ_RED, softBg: '#FBEAEA' },
-];
+const HseRecordCard = React.memo(function HseRecordCard({ r, section, index, canManage, onEdit, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const cat = section.category;
+  const isPpe = cat.indexOf('ppe') === 0;
+  const isFine = cat === 'ppeFines';
+  const Icon = section.icon;
+  const initial = (r.workerName || r.title || '?').trim().charAt(0).toUpperCase();
+  const toggle = () => setOpen((o) => !o);
+  const onKey = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  };
+  const fields = HZ_FIELDS.filter(([k]) => r[k] !== undefined && r[k] !== null && r[k] !== '');
 
-const HSE_BLANK_FORM = {
-  title: '',
-  area: '',
-  level: 'Medium',
-  rating: '',
-  severity: 'Minor',
-  status: 'Open',
-  type: '',
-  date: '',
-  category: '',
-  workerName: '',
-  issuedBy: '',
-  fineAmount: '',
-};
+  return (
+    <div
+      className={`wb-hz-card${open ? ' wb-hz-card-open' : ''}`}
+      style={{ '--a1': section.a1, '--a2': section.a2, '--soft': section.soft, '--d': `${Math.min(index, 10) * 38}ms` }}
+    >
+      <div className="wb-hz-card-head" role="button" tabIndex={0} aria-expanded={open} onClick={toggle} onKeyDown={onKey}>
+        <span className="wb-hz-avatar">{isPpe ? initial : <Icon size={17} color="#fff" />}</span>
+        <div className="wb-hz-card-main">
+          <p className="wb-hz-card-title">{r.title}</p>
+          <p className="wb-hz-card-meta">
+            {isPpe ? (
+              <>
+                <span className="wb-hz-chip"><UserCheck size={11} />{r.workerName || '—'}</span>
+                {r.issuedBy && <span className="wb-hz-meta-txt">Issued by {r.issuedBy}</span>}
+              </>
+            ) : (
+              <span className="wb-hz-meta-txt">{[r.area, r.type].filter(Boolean).join(' · ')}</span>
+            )}
+            <span className="wb-hz-chip wb-hz-chip-date"><CalendarDays size={11} />{r.date}</span>
+          </p>
+        </div>
+        <div className="wb-hz-card-side">
+          {isFine && r.fineAmount && <span className="wb-hz-fine">{r.fineAmount}</span>}
+          {isFine && <span className="wb-hz-nowaive">Not Waivable</span>}
+          {!isPpe && r.level && <RiskBadge level={r.level} />}
+          {!isPpe && !r.level && r.severity && <span className="wb-hz-sev">{r.severity}</span>}
+          {!isPpe && r.status && <StatusPill status={r.status} />}
+          {canManage && (
+            <>
+              <button type="button" className="wb-hz-iconbtn" title="Edit" onClick={(e) => { e.stopPropagation(); onEdit(r); }}>
+                <Pencil size={14} />
+              </button>
+              <button
+                type="button"
+                className="wb-hz-iconbtn wb-hz-iconbtn-danger"
+                title="Delete"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm(`Delete "${r.title}"?`)) onDelete(r.id);
+                }}
+              >
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
+        </div>
+        <ChevronRight className="wb-hz-chevron" size={16} />
+      </div>
+
+      <div className="wb-hz-detail">
+        <div className="wb-hz-detail-inner">
+          <div className="wb-hz-detail-grid">
+            <div className="wb-hz-kv"><span>Category</span><b>{section.label}</b></div>
+            {fields.map(([k, label]) => (
+              <div key={k} className="wb-hz-kv"><span>{label}</span><b>{String(r[k])}</b></div>
+            ))}
+          </div>
+          <div className="wb-hz-detail-actions">
+            <button type="button" className="wb-hz-btn wb-hz-btn-ghost" onClick={() => hzExportCsv(cat, [r], `${cat}-${r.id}`)}>
+              <Download size={13} /> Download record
+            </button>
+            {canManage && (
+              <button type="button" className="wb-hz-btn wb-hz-btn-solid" onClick={() => onEdit(r)}>
+                <Pencil size={13} /> Edit
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------
+// SECTION — header (icon, count, download, add) + list of cards
+// ---------------------------------------------------------------------
+function HseSection({ section, records, query, canManage, onAdd, onEdit, onDelete }) {
+  const q = query.trim().toLowerCase();
+  const shown = useMemo(() => {
+    if (!q) return records;
+    return records.filter((r) =>
+      [r.title, r.workerName, r.issuedBy, r.area, r.type, r.status, r.id, r.date].some((v) =>
+        String(v ?? '').toLowerCase().includes(q)
+      )
+    );
+  }, [records, q]);
+  const Icon = section.icon;
+
+  return (
+    <div className="wb-hz-section" style={{ '--a1': section.a1, '--a2': section.a2, '--soft': section.soft }}>
+      <div className="wb-hz-section-head">
+        <div className="wb-hz-section-title">
+          <span className="wb-hz-section-icon"><Icon size={18} color="#fff" /></span>
+          <h3 className="wb-serif">{section.label}</h3>
+          <span className="wb-hz-count"><HzNum value={records.length} duration={600} /></span>
+          {q && <span className="wb-hz-match">{shown.length} match{shown.length === 1 ? '' : 'es'}</span>}
+        </div>
+        <div className="wb-hz-section-actions">
+          <button
+            type="button"
+            className="wb-hz-btn wb-hz-btn-ghost"
+            disabled={records.length === 0}
+            onClick={() => hzExportCsv(section.category, records)}
+          >
+            <Download size={14} /> Download CSV
+          </button>
+          {canManage && (
+            <button type="button" className="wb-hz-btn wb-hz-btn-solid" onClick={() => onAdd(section.category)}>
+              <Plus size={14} /> Add {section.addLabel}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="wb-hz-empty">
+          <span className="wb-hz-empty-icon"><Icon size={22} /></span>
+          <p>{q ? 'No records match your search.' : 'No records yet.'}</p>
+        </div>
+      ) : (
+        <div className="wb-hz-list">
+          {shown.map((r, i) => (
+            <HseRecordCard
+              key={r.id}
+              r={r}
+              index={i}
+              section={section}
+              canManage={canManage}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// PPE INSIGHTS — KPI tiles, animated donut, 7-day issue chart
+// ---------------------------------------------------------------------
+function PpeInsights({ hse }) {
+  const issued = hse.ppeIssued || [];
+  const warns = hse.ppeWarnings || [];
+  const fines = hse.ppeFines || [];
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const stats = useMemo(() => {
+    const workers = new Set(
+      issued.map((r) => (r.workerName || '').trim().toLowerCase()).filter(Boolean)
+    ).size;
+    const fineTotal = fines.reduce((n, r) => n + hzMoney(r.fineAmount), 0);
+    const days = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      days.push({ key: HZ_YMD(d), label: d.toLocaleDateString(undefined, { weekday: 'short' }), today: i === 0, n: 0 });
+    }
+    const byKey = {};
+    days.forEach((d) => { byKey[d.key] = d; });
+    issued.forEach((r) => {
+      const k = String(r.date || '').slice(0, 10);
+      if (byKey[k]) byKey[k].n += 1;
+    });
+    return { workers, fineTotal, days };
+  }, [issued, fines]);
+
+  const total = issued.length + warns.length + fines.length;
+  const C = 2 * Math.PI * 46;
+  const segs = [
+    { n: issued.length, color: '#2FA37A', label: 'PPE issued' },
+    { n: warns.length, color: '#F2A93B', label: 'Warnings' },
+    { n: fines.length, color: '#E5665B', label: 'Fines' },
+  ];
+  let cum = 0;
+  const arcs = segs.map((s) => {
+    const len = total ? (s.n / total) * C : 0;
+    const arc = { ...s, len, off: cum };
+    cum += len;
+    return arc;
+  });
+  const maxDay = Math.max(1, ...stats.days.map((d) => d.n));
+
+  const kpis = [
+    { label: 'PPE issued', value: issued.length, sub: 'records logged', icon: HardHat, m: HZ_META.ppeIssued },
+    { label: 'Workers equipped', value: stats.workers, sub: 'unique workers', icon: Users, m: { a1: '#0F7C8C', a2: '#5FE0D0', soft: '#DDF7F3' } },
+    { label: 'Warnings', value: warns.length, sub: 'issued to workers', icon: Siren, m: HZ_META.ppeWarnings },
+    { label: 'Fines', value: fines.length, sub: `Total ${stats.fineTotal.toLocaleString()} · not waivable`, icon: Banknote, m: HZ_META.ppeFines },
+  ];
+
+  return (
+    <div className="wb-hz-insights">
+      <div className="wb-hz-kpis">
+        {kpis.map((k, i) => (
+          <div key={k.label} className="wb-hz-kpi" style={{ '--a1': k.m.a1, '--a2': k.m.a2, '--soft': k.m.soft, '--d': `${i * 70}ms` }}>
+            <span className="wb-hz-kpi-icon"><k.icon size={18} color="#fff" /></span>
+            <div className="wb-hz-kpi-body">
+              <p className="wb-hz-kpi-value wb-serif"><HzNum value={k.value} /></p>
+              <p className="wb-hz-kpi-label">{k.label}</p>
+              <p className="wb-hz-kpi-sub">{k.sub}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="wb-hz-panels">
+        <div className="wb-hz-panel">
+          <p className="wb-hz-panel-title"><Gauge size={14} /> Compliance mix</p>
+          <div className="wb-hz-donut-wrap">
+            <svg viewBox="0 0 120 120" className="wb-hz-donut" aria-hidden="true">
+              <circle cx="60" cy="60" r="46" fill="none" stroke="#F1EBDA" strokeWidth="12" />
+              {arcs.map((a) => (
+                <circle
+                  key={a.label}
+                  cx="60"
+                  cy="60"
+                  r="46"
+                  fill="none"
+                  stroke={a.color}
+                  strokeWidth="12"
+                  strokeLinecap="butt"
+                  transform="rotate(-90 60 60)"
+                  strokeDasharray={`${ready ? Math.max(0, a.len - (total && a.n ? 2 : 0)) : 0} ${C}`}
+                  strokeDashoffset={-a.off}
+                  className="wb-hz-donut-seg"
+                />
+              ))}
+            </svg>
+            <div className="wb-hz-donut-center">
+              <span className="wb-serif"><HzNum value={total} /></span>
+              <small>records</small>
+            </div>
+          </div>
+          <div className="wb-hz-legend">
+            {segs.map((s) => (
+              <span key={s.label}><i style={{ background: s.color }} />{s.label} <b>{s.n}</b></span>
+            ))}
+          </div>
+        </div>
+
+        <div className="wb-hz-panel">
+          <p className="wb-hz-panel-title"><Activity size={14} /> PPE issued · last 7 days</p>
+          <div className="wb-hz-bars">
+            {stats.days.map((d, i) => (
+              <div key={d.key} className="wb-hz-bar-col">
+                <span className="wb-hz-bar-n">{d.n}</span>
+                <span
+                  className={`wb-hz-bar${d.today ? ' wb-hz-bar-today' : ''}${d.n === 0 ? ' wb-hz-bar-empty' : ''}`}
+                  style={{ height: `${d.n === 0 ? 4 : 10 + (d.n / maxDay) * 90}px`, '--d': `${i * 70}ms` }}
+                />
+                <span className={`wb-hz-bar-l${d.today ? ' wb-hz-bar-l-today' : ''}`}>{d.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Visible to every department, but only HSE can add, edit or remove
-// records — everyone else gets a read-only view of risk assessments,
-// incidents and permits to work. Real-time via the hse_records channel
-// in App below, so every department sees HSE's edits immediately.
+// records. Real-time via the hse_records channel in App below.
 function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
   const [tab, setTab] = useState('riskAssessments');
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(HSE_BLANK_FORM);
+  const [query, setQuery] = useState('');
+  const formRef = useRef(null);
   const canManage = user.dept === 'HSE';
 
-  // startAdd takes an explicit category so the three PPE sections (Issued /
-  // Warnings / Fines) — which all live under the single "PPE & Compliance"
-  // tab — can each open the form pre-set to their own category. Every other
-  // tab just calls startAdd() with no argument, which falls back to `tab`
-  // exactly as before.
-  const startAdd = (category = tab) => {
+  // Stable delete handler so memoised cards don't re-render on every parent render.
+  const onDeleteRef = useRef(onDelete);
+  onDeleteRef.current = onDelete;
+  const stableDelete = useCallback((id) => onDeleteRef.current(id), []);
+
+  // startAdd takes an explicit category so every section's "+ Add" opens the
+  // form pre-set to its own category. It is always called with a string —
+  // the old `onClick={startAdd}` passed the click event as the category.
+  const startAdd = (category) => {
+    const cat = typeof category === 'string' ? category : tab;
     setForm({
       ...HSE_BLANK_FORM,
-      category,
-      date: new Date().toISOString().slice(0, 10),
-      issuedBy: category === 'ppeIssued' || category === 'ppeWarnings' || category === 'ppeFines' ? user.name : '',
+      category: cat,
+      date: HZ_YMD(new Date()),
+      issuedBy: cat === 'ppeIssued' || cat === 'ppeWarnings' || cat === 'ppeFines' ? user.name : '',
     });
     setEditingId(null);
     setFormOpen(true);
   };
 
-  const startEdit = (record) => {
+  const startEdit = useCallback((record) => {
     setForm({ ...HSE_BLANK_FORM, ...record });
     setEditingId(record.id);
     setFormOpen(true);
-  };
+  }, []);
 
-  // The category now travels on `form.category` (set by startAdd/startEdit)
-  // instead of always being read from `tab` — needed because the PPE tab
-  // holds three different categories at once.
+  useEffect(() => {
+    if (formOpen && formRef.current && formRef.current.scrollIntoView) {
+      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [formOpen, editingId]);
+
+  // The category travels on `form.category` (set by startAdd/startEdit).
   const activeCategory = form.category || tab;
 
   const submit = () => {
@@ -8531,7 +9023,11 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
     setForm(HSE_BLANK_FORM);
   };
 
-  const records = hse[tab] || [];
+  const sections = tab === 'ppe' ? PPE_SECTIONS : [{ category: tab, ...HZ_META[tab] }];
+  const tabCount = (t) =>
+    t.key === 'ppe'
+      ? (hse.ppeIssued || []).length + (hse.ppeWarnings || []).length + (hse.ppeFines || []).length
+      : (hse[t.key] || []).length;
 
   return (
     <div className="wb-page-padding" style={{ padding: '28px 32px' }}>
@@ -8555,472 +9051,261 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
           permits and PPE &amp; compliance records are maintained by the HSE department.
         </div>
       )}
-      <div
-        style={{
-          display: 'flex',
-          gap: '8px',
-          marginBottom: '20px',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-        }}
-      >
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+
+      <div className="wb-hz-toolbar">
+        <div className="wb-hz-tabs" role="tablist">
           {HSE_TABS.map((t) => (
             <button
               key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.key}
+              className={`wb-hz-tab${tab === t.key ? ' wb-hz-tab-active' : ''}`}
+              style={{ '--a1': t.meta.a1, '--a2': t.meta.a2, '--soft': t.meta.soft }}
               onClick={() => {
                 setTab(t.key);
                 setFormOpen(false);
-              }}
-              className="wb-btn"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 16px',
-                fontSize: '14px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                background: tab === t.key ? INK : 'white',
-                color: tab === t.key ? 'white' : '#7A7460',
-                border: `1px solid ${LINE}`,
+                setEditingId(null);
               }}
             >
-              <t.icon size={14} /> {t.label}
+              <span className="wb-hz-tab-icon"><t.icon size={15} /></span>
+              <span>{t.label}</span>
+              <span className="wb-hz-tab-count">{tabCount(t)}</span>
             </button>
           ))}
         </div>
-        {canManage && tab !== 'ppe' && (
-          <button
-            onClick={startAdd}
-            className="wb-btn wb-btn-gold"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: GOLD,
-              color: 'white',
-              border: 'none',
-              padding: '8px 16px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontSize: '13px',
-            }}
-          >
-            <Plus size={14} /> Add {HSE_TABS.find((t) => t.key === tab)?.label}
-          </button>
-        )}
+        <label className="wb-hz-search">
+          <Search size={14} />
+          <input
+            placeholder="Search name, worker, area…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button type="button" className="wb-hz-search-clear" onClick={() => setQuery('')} aria-label="Clear search">
+              <X size={13} />
+            </button>
+          )}
+        </label>
       </div>
 
       {formOpen && canManage && (
-        <div
-          className="wb-card"
-          style={{
-            background: 'white',
-            border: `1px solid ${LINE}`,
-            borderRadius: '10px',
-            padding: '18px',
-            marginBottom: '18px',
-            display: 'grid',
-            gap: '8px',
-            maxWidth: '480px',
-          }}
-        >
-          <input
-            placeholder={
-              activeCategory === 'ppeIssued' ? 'PPE items issued (e.g. Mask & Gloves)' :
-              activeCategory === 'ppeWarnings' ? 'Reason for warning (e.g. Not wearing mask during inspection)' :
-              activeCategory === 'ppeFines' ? 'Reason for fine' :
-              'Title'
-            }
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
+        <div ref={formRef}>
+          <div
+            className="wb-card wb-hz-form"
             style={{
-              padding: '8px',
+              background: 'white',
               border: `1px solid ${LINE}`,
-              borderRadius: '6px',
+              borderRadius: '10px',
+              padding: '18px',
+              marginBottom: '18px',
+              display: 'grid',
+              gap: '8px',
+              maxWidth: '480px',
             }}
-          />
-          {(activeCategory === 'ppeIssued' || activeCategory === 'ppeWarnings' || activeCategory === 'ppeFines') && (
-            <>
-              <input
-                placeholder="Worker name"
-                value={form.workerName}
-                onChange={(e) => setForm({ ...form, workerName: e.target.value })}
-                style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
-              />
-              <input
-                placeholder="Issued by (HSE Officer)"
-                value={form.issuedBy}
-                onChange={(e) => setForm({ ...form, issuedBy: e.target.value })}
-                style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
-              />
-            </>
-          )}
-          {activeCategory === 'ppeFines' && (
-            <>
-              <input
-                placeholder="Fine amount"
-                type="number"
-                value={form.fineAmount}
-                onChange={(e) => setForm({ ...form, fineAmount: e.target.value })}
-                style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
-              />
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#FBEAEA', border: `1px solid ${IPQ_RED}`, borderRadius: '6px', padding: '8px 10px', color: IPQ_RED, fontSize: '12px', fontWeight: 600 }}>
-                <Banknote size={13} /> This fine cannot be waived under any circumstances.
-              </div>
-            </>
-          )}
-          {activeCategory !== 'ppeIssued' && activeCategory !== 'ppeWarnings' && activeCategory !== 'ppeFines' && (
+          >
             <input
-              placeholder="Area / location"
-              value={form.area}
-              onChange={(e) => setForm({ ...form, area: e.target.value })}
+              placeholder={
+                activeCategory === 'ppeIssued' ? 'PPE items issued (e.g. Mask & Gloves)' :
+                activeCategory === 'ppeWarnings' ? 'Reason for warning (e.g. Not wearing mask during inspection)' :
+                activeCategory === 'ppeFines' ? 'Reason for fine' :
+                'Title'
+              }
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
               style={{
                 padding: '8px',
                 border: `1px solid ${LINE}`,
                 borderRadius: '6px',
               }}
             />
-          )}
-          <input
-            type="date"
-            value={form.date}
-            onChange={(e) => setForm({ ...form, date: e.target.value })}
-            style={{
-              padding: '8px',
-              border: `1px solid ${LINE}`,
-              borderRadius: '6px',
-            }}
-          />
-          {tab === 'riskAssessments' && (
-            <>
-              <input
-                placeholder="Rating (numeric score)"
-                type="number"
-                value={form.rating}
-                onChange={(e) => setForm({ ...form, rating: e.target.value })}
-                style={{
-                  padding: '8px',
-                  border: `1px solid ${LINE}`,
-                  borderRadius: '6px',
-                }}
-              />
-              <select
-                value={form.level}
-                onChange={(e) => setForm({ ...form, level: e.target.value })}
-                style={{
-                  padding: '8px',
-                  border: `1px solid ${LINE}`,
-                  borderRadius: '6px',
-                }}
-              >
-                <option>Low</option>
-                <option>Medium</option>
-                <option>High</option>
-              </select>
-            </>
-          )}
-          {tab === 'incidents' && (
-            <>
-              <select
-                value={form.severity}
-                onChange={(e) =>
-                  setForm({ ...form, severity: e.target.value })
-                }
-                style={{
-                  padding: '8px',
-                  border: `1px solid ${LINE}`,
-                  borderRadius: '6px',
-                }}
-              >
-                <option>Minor</option>
-                <option>Moderate</option>
-                <option>Major</option>
-              </select>
-              <select
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-                style={{
-                  padding: '8px',
-                  border: `1px solid ${LINE}`,
-                  borderRadius: '6px',
-                }}
-              >
-                <option>Open</option>
-                <option>Closed</option>
-              </select>
-            </>
-          )}
-          {tab === 'permits' && (
-            <>
-              <input
-                placeholder="Permit type (e.g. Working at Height)"
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
-                style={{
-                  padding: '8px',
-                  border: `1px solid ${LINE}`,
-                  borderRadius: '6px',
-                }}
-              />
-              <select
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-                style={{
-                  padding: '8px',
-                  border: `1px solid ${LINE}`,
-                  borderRadius: '6px',
-                }}
-              >
-                <option>Open</option>
-                <option>Closed</option>
-              </select>
-            </>
-          )}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={submit}
-              className="wb-btn wb-btn-gold"
-              style={{
-                background: GOLD,
-                color: 'white',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-              }}
-            >
-              {editingId ? 'Save changes' : 'Add record'}
-            </button>
-            <button
-              onClick={() => {
-                setFormOpen(false);
-                setEditingId(null);
-              }}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#7A7460',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {tab === 'ppe' ? (
-        <PpeComplianceSection
-          hse={hse}
-          canManage={canManage}
-          onAddClick={startAdd}
-          onEditClick={startEdit}
-          onDelete={onDelete}
-        />
-      ) : (
-        <div className="wb-hse-grid">
-          {records.length === 0 && (
-            <p style={{ color: '#9C9585', fontSize: '14px' }}>
-              No records yet.
-            </p>
-          )}
-          {records.map((r) => (
-            <div
-              key={r.id}
-              className="wb-card"
-              style={{
-                background: 'white',
-                border: `1px solid ${LINE}`,
-                borderRadius: '10px',
-                padding: '18px',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  marginBottom: '8px',
-                }}
-              >
-                <span style={{ color: '#9C9585', fontSize: '12px' }}>{r.id}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {r.level && <RiskBadge level={r.level} />}
-                  {!r.level && r.severity && (
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        color: '#7A4A1E',
-                        border: '1px solid #7A4A1E',
-                        borderRadius: '4px',
-                        padding: '1px 6px',
-                      }}
-                    >
-                      {r.severity}
-                    </span>
-                  )}
-                  {r.status && <StatusPill status={r.status} />}
-                  {canManage && (
-                    <>
-                      <button
-                        onClick={() => startEdit(r)}
-                        title="Edit"
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#5C5646',
-                          cursor: 'pointer',
-                          display: 'flex',
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Delete "${r.title}"?`)) {
-                            onDelete(r.id);
-                          }
-                        }}
-                        title="Delete"
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#8A2E2E',
-                          cursor: 'pointer',
-                          display: 'flex',
-                        }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-              <p
-                style={{
-                  color: INK,
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  margin: 0,
-                }}
-              >
-                {r.title}
-              </p>
-              <p
-                style={{ color: '#7A7460', fontSize: '12px', margin: '4px 0 0' }}
-              >
-                {r.area} {r.type ? `· ${r.type}` : ''} · {r.date}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
-// PPE & COMPLIANCE — three stacked blocks inside the HSE page's "PPE &
-// Compliance" tab: PPE Issued (who was given a mask/gloves and by whom),
-// Warnings, and Fines. Each block has its own "+ Add" button (wired to
-// HSEPage's startAdd(category)) and its own compact list. Fines always
-// carry a "Not waivable" marker — the policy is that a fine logged here
-// can never be waived, so the UI never offers a way to.
-// ---------------------------------------------------------------------
-function PpeComplianceSection({ hse, canManage, onAddClick, onEditClick, onDelete }) {
-  return (
-    <div style={{ display: 'grid', gap: '20px' }}>
-      {PPE_SECTIONS.map((section) => {
-        const records = hse[section.category] || [];
-        return (
-          <div
-            key={section.category}
-            className="wb-card"
-            style={{ background: 'white', border: `1px solid ${LINE}`, borderRadius: '12px', padding: '18px' }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '8px', background: section.softBg }}>
-                  <section.icon size={15} color={section.accent} />
-                </span>
-                <p style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: '17px', color: INK }}>{section.label}</p>
-                <span style={{ fontSize: '11px', fontWeight: 700, color: section.accent, background: section.softBg, borderRadius: '999px', padding: '2px 9px' }}>
-                  {records.length}
-                </span>
-              </div>
-              {canManage && (
-                <button
-                  onClick={() => onAddClick(section.category)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: section.accent, color: 'white', border: 'none', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
-                >
-                  <Plus size={13} /> Add {section.addLabel}
-                </button>
-              )}
-            </div>
-
-            {records.length === 0 && (
-              <p style={{ color: '#9C9585', fontSize: '13px', margin: 0 }}>No records yet.</p>
+            {(activeCategory === 'ppeIssued' || activeCategory === 'ppeWarnings' || activeCategory === 'ppeFines') && (
+              <>
+                <input
+                  placeholder="Worker name"
+                  value={form.workerName}
+                  onChange={(e) => setForm({ ...form, workerName: e.target.value })}
+                  style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
+                />
+                <input
+                  placeholder="Issued by (HSE Officer)"
+                  value={form.issuedBy}
+                  onChange={(e) => setForm({ ...form, issuedBy: e.target.value })}
+                  style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
+                />
+              </>
             )}
-
-            <div style={{ display: 'grid', gap: '8px' }}>
-              {records.map((r) => (
-                <div
-                  key={r.id}
+            {activeCategory === 'ppeFines' && (
+              <>
+                <input
+                  placeholder="Fine amount"
+                  type="number"
+                  value={form.fineAmount}
+                  onChange={(e) => setForm({ ...form, fineAmount: e.target.value })}
+                  style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#FBEAEA', border: `1px solid ${IPQ_RED}`, borderRadius: '6px', padding: '8px 10px', color: IPQ_RED, fontSize: '12px', fontWeight: 600 }}>
+                  <Banknote size={13} /> This fine cannot be waived under any circumstances.
+                </div>
+              </>
+            )}
+            {activeCategory !== 'ppeIssued' && activeCategory !== 'ppeWarnings' && activeCategory !== 'ppeFines' && (
+              <input
+                placeholder="Area / location"
+                value={form.area}
+                onChange={(e) => setForm({ ...form, area: e.target.value })}
+                style={{
+                  padding: '8px',
+                  border: `1px solid ${LINE}`,
+                  borderRadius: '6px',
+                }}
+              />
+            )}
+            <input
+              type="date"
+              value={form.date}
+              onChange={(e) => setForm({ ...form, date: e.target.value })}
+              style={{
+                padding: '8px',
+                border: `1px solid ${LINE}`,
+                borderRadius: '6px',
+              }}
+            />
+            {tab === 'riskAssessments' && (
+              <>
+                <input
+                  placeholder="Rating (numeric score)"
+                  type="number"
+                  value={form.rating}
+                  onChange={(e) => setForm({ ...form, rating: e.target.value })}
                   style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    justifyContent: 'space-between',
-                    gap: '10px',
-                    background: PAPER,
+                    padding: '8px',
                     border: `1px solid ${LINE}`,
-                    borderRadius: '8px',
-                    padding: '10px 12px',
+                    borderRadius: '6px',
+                  }}
+                />
+                <select
+                  value={form.level}
+                  onChange={(e) => setForm({ ...form, level: e.target.value })}
+                  style={{
+                    padding: '8px',
+                    border: `1px solid ${LINE}`,
+                    borderRadius: '6px',
                   }}
                 >
-                  <div style={{ minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: '13px', color: INK, fontWeight: 600 }}>
-                      {r.title}
-                    </p>
-                    <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#7A7460' }}>
-                      <UserCheck size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '3px' }} />
-                      {r.workerName || '—'}
-                      {r.issuedBy ? ` · Issued by ${r.issuedBy}` : ''}
-                      {' · '}{r.date}
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                    {section.category === 'ppeFines' && (
-                      <>
-                        {r.fineAmount && (
-                          <span style={{ fontSize: '12px', fontWeight: 700, color: IPQ_RED }}>{r.fineAmount}</span>
-                        )}
-                        <span style={{ fontSize: '10px', fontWeight: 700, color: IPQ_RED, background: '#FBEAEA', border: `1px solid ${IPQ_RED}`, borderRadius: '999px', padding: '2px 8px' }}>
-                          Not Waivable
-                        </span>
-                      </>
-                    )}
-                    {canManage && (
-                      <>
-                        <button onClick={() => onEditClick(r)} title="Edit" style={{ background: 'none', border: 'none', color: '#5C5646', cursor: 'pointer', display: 'flex' }}>
-                          <Pencil size={13} />
-                        </button>
-                        <button
-                          onClick={() => { if (window.confirm(`Delete this ${section.label.toLowerCase()} record for ${r.workerName || 'this worker'}?`)) onDelete(r.id); }}
-                          title="Delete"
-                          style={{ background: 'none', border: 'none', color: '#8A2E2E', cursor: 'pointer', display: 'flex' }}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
+                  <option>Low</option>
+                  <option>Medium</option>
+                  <option>High</option>
+                </select>
+              </>
+            )}
+            {tab === 'incidents' && (
+              <>
+                <select
+                  value={form.severity}
+                  onChange={(e) =>
+                    setForm({ ...form, severity: e.target.value })
+                  }
+                  style={{
+                    padding: '8px',
+                    border: `1px solid ${LINE}`,
+                    borderRadius: '6px',
+                  }}
+                >
+                  <option>Minor</option>
+                  <option>Moderate</option>
+                  <option>Major</option>
+                </select>
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                  style={{
+                    padding: '8px',
+                    border: `1px solid ${LINE}`,
+                    borderRadius: '6px',
+                  }}
+                >
+                  <option>Open</option>
+                  <option>Closed</option>
+                </select>
+              </>
+            )}
+            {tab === 'permits' && (
+              <>
+                <input
+                  placeholder="Permit type (e.g. Working at Height)"
+                  value={form.type}
+                  onChange={(e) => setForm({ ...form, type: e.target.value })}
+                  style={{
+                    padding: '8px',
+                    border: `1px solid ${LINE}`,
+                    borderRadius: '6px',
+                  }}
+                />
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                  style={{
+                    padding: '8px',
+                    border: `1px solid ${LINE}`,
+                    borderRadius: '6px',
+                  }}
+                >
+                  <option>Open</option>
+                  <option>Closed</option>
+                </select>
+              </>
+            )}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={submit}
+                className="wb-btn wb-btn-gold"
+                style={{
+                  background: GOLD,
+                  color: 'white',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                }}
+              >
+                {editingId ? 'Save changes' : 'Add record'}
+              </button>
+              <button
+                onClick={() => {
+                  setFormOpen(false);
+                  setEditingId(null);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#7A7460',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
             </div>
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      {tab === 'ppe' && <PpeInsights hse={hse} />}
+
+      <div className="wb-hz-sections" key={tab}>
+        {sections.map((s) => (
+          <HseSection
+            key={s.category}
+            section={s}
+            records={hse[s.category] || []}
+            query={query}
+            canManage={canManage}
+            onAdd={startAdd}
+            onEdit={startEdit}
+            onDelete={stableDelete}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -17440,6 +17725,255 @@ function PremiumStyles() {
       @media (max-width: 860px) {
         .wb-hse-hero-top { max-width: 100%; }
         .wb-hse-hero-orbit { display: none; }
+      }
+
+      /* ============================================================= */
+      /* HSE LUXE — obsidian + crimson + gold command deck              */
+      /* Performance rules: transform/opacity animation only, no        */
+      /* backdrop-filter, no animated blur, offscreen cards skipped.    */
+      /* ============================================================= */
+      @keyframes wb-hz-rise { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
+      @keyframes wb-hz-spin { to { transform: rotate(360deg); } }
+      @keyframes wb-hz-spin-rev { to { transform: rotate(-360deg); } }
+      @keyframes wb-hz-float { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-14px) rotate(8deg); } }
+      @keyframes wb-hz-twinkle { 0%, 100% { opacity: 0.15; transform: scale(0.6); } 50% { opacity: 1; transform: scale(1.3); } }
+      @keyframes wb-hz-blob-a { 0%, 100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(-40px,24px,0) scale(1.15); } }
+      @keyframes wb-hz-blob-b { 0%, 100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(46px,-20px,0) scale(1.1); } }
+      @keyframes wb-hz-blob-c { 0%, 100% { transform: translate3d(0,0,0) scale(0.9); } 50% { transform: translate3d(-24px,-30px,0) scale(1.2); } }
+      @keyframes wb-hz-shine { from { background-position: 0% 50%; } to { background-position: 220% 50%; } }
+      @keyframes wb-hz-sweep { from { transform: translateX(0) skewX(-18deg); } to { transform: translateX(420%) skewX(-18deg); } }
+      @keyframes wb-hz-ping { 0% { transform: scale(1); opacity: 0.85; } 100% { transform: scale(1.14); opacity: 0; } }
+      @keyframes wb-hz-live { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.7); opacity: 0.4; } }
+      @keyframes wb-hz-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+      @keyframes wb-hz-pop { 0% { transform: scale(0.55) rotate(-14deg); } 70% { transform: scale(1.15) rotate(4deg); } 100% { transform: none; } }
+      @keyframes wb-hz-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+
+      /* ---- HERO ---- */
+      .wb-hz-hero {
+        position: relative; overflow: hidden; isolation: isolate;
+        border-radius: 28px; padding: 36px 40px 30px; margin-bottom: 22px; min-height: 240px;
+        background: radial-gradient(120% 150% at 0% 0%, #43111a 0%, #17090e 46%, #07060a 100%);
+        border: 1px solid rgba(242,217,153,0.30);
+        box-shadow: 0 30px 70px rgba(20,6,10,0.45), inset 0 1px 0 rgba(242,217,153,0.28);
+        animation: wb-hz-rise 0.6s cubic-bezier(0.16,1,0.3,1) both;
+      }
+      .wb-hz-grid {
+        position: absolute; inset: 0; pointer-events: none;
+        background-image:
+          linear-gradient(rgba(242,217,153,0.07) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(242,217,153,0.07) 1px, transparent 1px);
+        background-size: 32px 32px;
+        -webkit-mask-image: radial-gradient(ellipse 85% 85% at 40% 40%, #000 20%, transparent 78%);
+        mask-image: radial-gradient(ellipse 85% 85% at 40% 40%, #000 20%, transparent 78%);
+      }
+      .wb-hz-blob { position: absolute; border-radius: 50%; pointer-events: none; will-change: transform; z-index: -1; }
+      .wb-hz-blob-a { width: 340px; height: 340px; top: -130px; right: 6%; background: radial-gradient(circle, rgba(230,70,80,0.50), transparent 68%); animation: wb-hz-blob-a 9s ease-in-out infinite; }
+      .wb-hz-blob-b { width: 300px; height: 300px; bottom: -140px; left: 4%; background: radial-gradient(circle, rgba(201,165,92,0.34), transparent 68%); animation: wb-hz-blob-b 11s ease-in-out infinite; }
+      .wb-hz-blob-c { width: 240px; height: 240px; top: 30%; left: 44%; background: radial-gradient(circle, rgba(255,120,140,0.24), transparent 68%); animation: wb-hz-blob-c 13s ease-in-out infinite; }
+      .wb-hz-sweep {
+        position: absolute; top: -20%; bottom: -20%; left: -50%; width: 38%; pointer-events: none;
+        background: linear-gradient(100deg, transparent, rgba(242,217,153,0.10), transparent);
+        animation: wb-hz-sweep 7s ease-in-out infinite; will-change: transform;
+      }
+      .wb-hz-twinkle { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: #F2D999; box-shadow: 0 0 8px 2px rgba(242,217,153,0.7); animation: wb-hz-twinkle 3.2s ease-in-out infinite; }
+      .wb-hz-float { position: absolute; opacity: 0.9; animation: wb-hz-float 5s ease-in-out infinite; will-change: transform; }
+
+      .wb-hz-orbit { position: absolute; top: 24px; right: 38px; width: 100px; height: 100px; display: grid; place-items: center; }
+      .wb-hz-ring { position: absolute; border-radius: 50%; border: 1px dashed rgba(242,217,153,0.5); }
+      .wb-hz-ring::after { content: ''; position: absolute; top: -3px; left: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: #F2D999; box-shadow: 0 0 10px 2px rgba(242,217,153,0.9); }
+      .wb-hz-ring-a { inset: 0; animation: wb-hz-spin 16s linear infinite; }
+      .wb-hz-ring-b { inset: 12px; border-color: rgba(255,120,120,0.5); animation: wb-hz-spin-rev 22s linear infinite; }
+      .wb-hz-ring-b::after { background: #FF8A80; box-shadow: 0 0 10px 2px rgba(255,138,128,0.9); }
+      .wb-hz-badge {
+        position: relative; width: 58px; height: 58px; border-radius: 19px; display: grid; place-items: center;
+        background: linear-gradient(135deg, rgba(242,217,153,0.28), rgba(242,217,153,0.05));
+        border: 1.5px solid rgba(242,217,153,0.55);
+        animation: wb-hz-bob 3.4s ease-in-out infinite;
+      }
+      .wb-hz-badge::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgba(242,217,153,0.7); animation: wb-hz-ping 2.2s ease-out infinite; }
+
+      .wb-hz-hero-top { position: relative; z-index: 2; max-width: 58%; }
+      .wb-hz-eyebrow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,236,226,0.85); margin-bottom: 12px; }
+      .wb-hz-live { width: 8px; height: 8px; border-radius: 50%; background: #FF8A80; box-shadow: 0 0 10px rgba(255,138,128,0.9); animation: wb-hz-live 1.6s ease-in-out infinite; }
+      .wb-hz-crown { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; color: #F2D999; border: 1px solid rgba(242,217,153,0.45); background: rgba(242,217,153,0.10); }
+      .wb-hz-title {
+        font-size: 36px; margin: 0 0 8px; letter-spacing: -0.01em; color: #fff;
+        background: linear-gradient(100deg, #fff 0%, #F2D999 28%, #fff 50%, #F2D999 72%, #fff 100%);
+        background-size: 220% 100%; -webkit-background-clip: text; background-clip: text;
+        -webkit-text-fill-color: transparent; animation: wb-hz-shine 6s linear infinite;
+      }
+      .wb-hz-sub { font-size: 14px; color: rgba(255,236,226,0.78); margin: 0; max-width: 480px; }
+      .wb-hz-hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+
+      .wb-hz-stats { position: relative; z-index: 2; display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+      .wb-hz-stat {
+        position: relative; display: flex; align-items: center; gap: 9px; padding: 9px 16px 9px 10px; border-radius: 999px;
+        color: #fff; background: rgba(255,255,255,0.07); border: 1px solid rgba(242,217,153,0.22);
+        transition: transform 0.22s cubic-bezier(0.2,0.8,0.2,1), border-color 0.22s, background 0.22s;
+        animation: wb-hz-rise 0.5s cubic-bezier(0.16,1,0.3,1) both; animation-delay: var(--d, 0ms);
+      }
+      .wb-hz-stat:hover { transform: translateY(-4px); border-color: rgba(242,217,153,0.7); background: rgba(255,255,255,0.13); }
+      .wb-hz-stat-icon { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #17090e; background: linear-gradient(135deg, #F2D999, #C9A55C); }
+      .wb-hz-stat-value { font-weight: 800; font-size: 16px; }
+      .wb-hz-stat-label { font-size: 11.5px; opacity: 0.82; }
+      .wb-hz-stat-alert { border-color: rgba(255,120,110,0.6); background: rgba(255,90,80,0.16); }
+      .wb-hz-stat-alert .wb-hz-stat-icon { background: linear-gradient(135deg, #FFB3AB, #E5665B); }
+      .wb-hz-stat-alert::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgba(255,120,110,0.9); pointer-events: none; animation: wb-hz-ping 1.8s ease-out infinite; }
+
+      /* ---- BUTTONS ---- */
+      .wb-hz-btn {
+        position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 7px;
+        padding: 9px 15px; border-radius: 12px; font-size: 12.5px; font-weight: 700; font-family: inherit; cursor: pointer;
+        border: 1px solid transparent; transition: transform 0.18s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.18s, background 0.18s, opacity 0.18s;
+      }
+      .wb-hz-btn::after { content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%; background: linear-gradient(100deg, transparent, rgba(255,255,255,0.45), transparent); transform: translateX(0) skewX(-18deg); transition: transform 0.6s ease; pointer-events: none; }
+      .wb-hz-btn:hover:not(:disabled) { transform: translateY(-2px); }
+      .wb-hz-btn:hover:not(:disabled)::after { transform: translateX(420%) skewX(-18deg); }
+      .wb-hz-btn:active:not(:disabled) { transform: translateY(0) scale(0.97); }
+      .wb-hz-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .wb-hz-btn-gold { color: #2A1608; background: linear-gradient(135deg, #F7E2A6, #C9A55C); box-shadow: 0 10px 24px -10px rgba(201,165,92,0.9); }
+      .wb-hz-btn-glass { color: #F2D999; background: rgba(255,255,255,0.08); border-color: rgba(242,217,153,0.45); }
+      .wb-hz-btn-glass:hover { background: rgba(255,255,255,0.16); }
+      .wb-hz-btn-solid { color: #fff; background: linear-gradient(135deg, var(--a1, #1F6B52), var(--a2, #3FBF8F)); box-shadow: 0 10px 22px -10px var(--a1, #1F6B52); }
+      .wb-hz-btn-ghost { color: #4E4835; background: #fff; border-color: #E4D8B8; }
+      .wb-hz-btn-ghost:hover:not(:disabled) { border-color: var(--a1, #C9A55C); box-shadow: 0 8px 18px -12px var(--a1, #C9A55C); }
+      .wb-hz-btn:focus-visible, .wb-hz-tab:focus-visible, .wb-hz-card-head:focus-visible, .wb-hz-iconbtn:focus-visible { outline: 2px solid var(--a1, #C9A55C); outline-offset: 2px; }
+
+      /* ---- TABS + SEARCH ---- */
+      .wb-hz-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+      .wb-hz-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+      .wb-hz-tab {
+        display: inline-flex; align-items: center; gap: 9px; padding: 7px 12px 7px 7px; border-radius: 15px;
+        border: 1px solid #EADFC4; background: #fff; color: #6B6553; font-size: 13.5px; font-weight: 600; font-family: inherit; cursor: pointer;
+        transition: transform 0.2s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.2s, color 0.2s, background 0.2s;
+      }
+      .wb-hz-tab:hover { transform: translateY(-2px); box-shadow: 0 12px 22px -16px var(--a1); }
+      .wb-hz-tab-icon { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; color: var(--a1); background: var(--soft); transition: background 0.2s, color 0.2s; }
+      .wb-hz-tab-count { min-width: 22px; text-align: center; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; color: var(--a1); background: var(--soft); }
+      .wb-hz-tab-active { color: #fff; border-color: transparent; background: linear-gradient(135deg, var(--a1), var(--a2)); box-shadow: 0 14px 28px -12px var(--a1); }
+      .wb-hz-tab-active .wb-hz-tab-icon { color: #fff; background: rgba(255,255,255,0.22); animation: wb-hz-pop 0.5s cubic-bezier(0.2,0.9,0.3,1.3); }
+      .wb-hz-tab-active .wb-hz-tab-count { color: #fff; background: rgba(255,255,255,0.24); }
+      .wb-hz-search { display: flex; align-items: center; gap: 8px; height: 42px; min-width: 240px; padding: 0 12px; border-radius: 13px; background: #fff; border: 1px solid #EADFC4; color: #8A8370; transition: box-shadow 0.2s, border-color 0.2s; }
+      .wb-hz-search:focus-within { border-color: #C9A55C; box-shadow: 0 0 0 4px rgba(201,165,92,0.18); }
+      .wb-hz-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 13px; font-family: inherit; color: #0A1220; }
+      .wb-hz-search-clear { border: 0; background: #F4EEDC; border-radius: 50%; width: 20px; height: 20px; display: grid; place-items: center; cursor: pointer; color: #6B6553; }
+
+      .wb-hz-form { box-shadow: 0 24px 50px -26px rgba(60,40,10,0.55) !important; border-color: #E4D3A6 !important; animation: wb-hz-rise 0.35s cubic-bezier(0.16,1,0.3,1) both; }
+
+      /* ---- INSIGHTS ---- */
+      .wb-hz-insights { margin-bottom: 20px; }
+      .wb-hz-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 14px; }
+      .wb-hz-kpi {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 20px;
+        background: linear-gradient(135deg, #fff 0%, var(--soft) 160%); border: 1px solid #EADFC4;
+        transition: transform 0.22s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.22s;
+        animation: wb-hz-rise 0.5s cubic-bezier(0.16,1,0.3,1) both; animation-delay: var(--d, 0ms);
+      }
+      .wb-hz-kpi::after { content: ''; position: absolute; right: -30px; top: -30px; width: 100px; height: 100px; border-radius: 50%; background: radial-gradient(circle, var(--a2), transparent 70%); opacity: 0.2; }
+      .wb-hz-kpi:hover { transform: translateY(-4px); box-shadow: 0 20px 34px -22px var(--a1); }
+      .wb-hz-kpi-icon { flex-shrink: 0; width: 46px; height: 46px; border-radius: 15px; display: grid; place-items: center; background: linear-gradient(135deg, var(--a1), var(--a2)); box-shadow: 0 10px 20px -10px var(--a1); transition: transform 0.3s cubic-bezier(0.2,0.9,0.3,1.4); }
+      .wb-hz-kpi:hover .wb-hz-kpi-icon { transform: rotate(-8deg) scale(1.1); }
+      .wb-hz-kpi-value { margin: 0; font-size: 30px; line-height: 1; color: #0A1220; }
+      .wb-hz-kpi-label { margin: 4px 0 0; font-size: 12.5px; font-weight: 700; color: #4E4835; }
+      .wb-hz-kpi-sub { margin: 2px 0 0; font-size: 11px; color: #8A8370; }
+
+      .wb-hz-panels { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr); gap: 14px; }
+      .wb-hz-panel { border-radius: 22px; padding: 18px; background: #fff; border: 1px solid #EADFC4; animation: wb-hz-rise 0.55s cubic-bezier(0.16,1,0.3,1) both; animation-delay: 0.15s; }
+      .wb-hz-panel-title { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; font-size: 12.5px; font-weight: 700; color: #4E4835; letter-spacing: 0.02em; }
+      .wb-hz-donut-wrap { position: relative; width: 168px; height: 168px; margin: 0 auto 10px; }
+      .wb-hz-donut { width: 100%; height: 100%; }
+      .wb-hz-donut-seg { transition: stroke-dasharray 1.1s cubic-bezier(0.2,0.8,0.2,1); }
+      .wb-hz-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+      .wb-hz-donut-center span { font-size: 30px; line-height: 1; color: #0A1220; }
+      .wb-hz-donut-center small { font-size: 11px; color: #8A8370; margin-top: 3px; }
+      .wb-hz-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; font-size: 11.5px; color: #6B6553; }
+      .wb-hz-legend span { display: inline-flex; align-items: center; gap: 6px; }
+      .wb-hz-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+      .wb-hz-legend b { color: #0A1220; }
+      .wb-hz-bars { display: flex; align-items: flex-end; gap: 12px; height: 170px; padding-top: 6px; }
+      .wb-hz-bar-col { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }
+      .wb-hz-bar-n { font-size: 11px; font-weight: 800; color: #1F6B52; }
+      .wb-hz-bar {
+        width: 100%; max-width: 40px; border-radius: 11px 11px 5px 5px; transform-origin: bottom;
+        background: linear-gradient(180deg, #3FBF8F, #1F6B52);
+        animation: wb-hz-grow 0.8s cubic-bezier(0.2,0.9,0.2,1) both; animation-delay: var(--d, 0ms);
+        transition: filter 0.2s;
+      }
+      .wb-hz-bar:hover { filter: brightness(1.12); }
+      .wb-hz-bar-today { background: linear-gradient(180deg, #F7E2A6, #C9A55C); }
+      .wb-hz-bar-empty { background: #EFE8D4; }
+      .wb-hz-bar-l { font-size: 11px; color: #8A8370; }
+      .wb-hz-bar-l-today { color: #8C6A2E; font-weight: 800; }
+
+      /* ---- SECTION ---- */
+      .wb-hz-section { margin-bottom: 20px; padding: 20px; border-radius: 24px; background: #fff; border: 1px solid #EADFC4; box-shadow: 0 22px 44px -32px rgba(60,40,10,0.5); animation: wb-hz-rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }
+      .wb-hz-section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+      .wb-hz-section-title { display: flex; align-items: center; gap: 12px; }
+      .wb-hz-section-title h3 { margin: 0; font-size: 21px; color: #0A1220; }
+      .wb-hz-section-icon { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; background: linear-gradient(135deg, var(--a1), var(--a2)); box-shadow: 0 10px 20px -10px var(--a1); animation: wb-hz-bob 4s ease-in-out infinite; }
+      .wb-hz-count { padding: 3px 11px; border-radius: 999px; font-size: 12px; font-weight: 800; color: var(--a1); background: var(--soft); }
+      .wb-hz-match { font-size: 11.5px; color: #8A8370; }
+      .wb-hz-section-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .wb-hz-list { display: grid; gap: 10px; }
+
+      .wb-hz-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 26px 10px; color: #9C9585; font-size: 13px; }
+      .wb-hz-empty p { margin: 0; }
+      .wb-hz-empty-icon { width: 54px; height: 54px; border-radius: 18px; display: grid; place-items: center; color: var(--a1); background: var(--soft); animation: wb-hz-bob 3s ease-in-out infinite; }
+
+      /* ---- RECORD CARD ---- */
+      .wb-hz-card {
+        position: relative; overflow: hidden; border-radius: 16px; border: 1px solid #EADFC4;
+        background: linear-gradient(180deg, #FFFFFF, #FBF8EF);
+        transition: transform 0.22s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.22s, border-color 0.22s;
+        animation: wb-hz-rise 0.5s cubic-bezier(0.16,1,0.3,1) both; animation-delay: var(--d, 0ms);
+        content-visibility: auto; contain-intrinsic-size: auto 72px;
+      }
+      .wb-hz-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: linear-gradient(180deg, var(--a1), var(--a2)); }
+      .wb-hz-card:hover { transform: translateY(-2px); border-color: var(--a2); box-shadow: 0 18px 30px -22px var(--a1); }
+      .wb-hz-card-open { border-color: var(--a1); box-shadow: 0 20px 36px -24px var(--a1); }
+      .wb-hz-card-head { display: flex; align-items: center; gap: 13px; padding: 13px 14px 13px 18px; cursor: pointer; user-select: none; }
+      .wb-hz-avatar { flex-shrink: 0; width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; font-weight: 800; font-size: 16px; color: #fff; background: linear-gradient(135deg, var(--a1), var(--a2)); box-shadow: 0 8px 16px -8px var(--a1); transition: transform 0.3s cubic-bezier(0.2,0.9,0.3,1.4); }
+      .wb-hz-card:hover .wb-hz-avatar { transform: rotate(-6deg) scale(1.08); }
+      .wb-hz-card-main { flex: 1; min-width: 0; }
+      .wb-hz-card-title { margin: 0; font-size: 14px; font-weight: 700; color: #0A1220; overflow-wrap: anywhere; }
+      .wb-hz-card-meta { margin: 5px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; color: #7A7460; }
+      .wb-hz-meta-txt { color: #7A7460; }
+      .wb-hz-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--a1); background: var(--soft); }
+      .wb-hz-chip-date { color: #6B6553; background: #F4EEDC; }
+      .wb-hz-card-side { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; flex-shrink: 0; }
+      .wb-hz-fine { font-size: 13px; font-weight: 800; color: #B23A3A; }
+      .wb-hz-nowaive { font-size: 10px; font-weight: 800; color: #B23A3A; background: #FBEAEA; border: 1px solid #E8B4B0; border-radius: 999px; padding: 2px 8px; }
+      .wb-hz-sev { font-size: 11px; color: #7A4A1E; border: 1px solid #7A4A1E; border-radius: 6px; padding: 1px 7px; }
+      .wb-hz-iconbtn { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; border: 1px solid transparent; background: transparent; color: #5C5646; cursor: pointer; transition: transform 0.16s, background 0.16s, color 0.16s; }
+      .wb-hz-iconbtn:hover { background: #F4EEDC; transform: scale(1.12); }
+      .wb-hz-iconbtn-danger { color: #8A2E2E; }
+      .wb-hz-iconbtn-danger:hover { background: #FBEAEA; }
+      .wb-hz-chevron { flex-shrink: 0; color: #9C9585; transition: transform 0.28s cubic-bezier(0.2,0.8,0.2,1), color 0.2s; }
+      .wb-hz-card-open .wb-hz-chevron { transform: rotate(90deg); color: var(--a1); }
+
+      .wb-hz-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.32s cubic-bezier(0.2,0.8,0.2,1); }
+      .wb-hz-card-open .wb-hz-detail { grid-template-rows: 1fr; }
+      .wb-hz-detail-inner { min-height: 0; overflow: hidden; visibility: hidden; opacity: 0; transition: opacity 0.25s ease, visibility 0s linear 0.32s; }
+      .wb-hz-card-open .wb-hz-detail-inner { visibility: visible; opacity: 1; transition: opacity 0.3s ease 0.08s, visibility 0s; }
+      .wb-hz-detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 4px 18px 8px 20px; }
+      .wb-hz-kv { padding: 9px 11px; border-radius: 12px; background: var(--soft); }
+      .wb-hz-kv span { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #8A8370; }
+      .wb-hz-kv b { display: block; margin-top: 3px; font-size: 13px; color: #0A1220; overflow-wrap: anywhere; }
+      .wb-hz-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 18px 16px 20px; }
+
+      @media (max-width: 860px) {
+        .wb-hz-hero { padding: 26px 20px 22px; }
+        .wb-hz-hero-top { max-width: 100%; }
+        .wb-hz-orbit { display: none; }
+        .wb-hz-title { font-size: 28px; }
+        .wb-hz-panels { grid-template-columns: 1fr; }
+        .wb-hz-search { width: 100%; min-width: 0; }
+        .wb-hz-card-head { flex-wrap: wrap; }
+        .wb-hz-card-side { order: 3; width: 100%; justify-content: flex-start; padding-left: 53px; }
+        .wb-hz-chevron { margin-left: auto; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        [class*="wb-hz-"], [class*="wb-hz-"]::before, [class*="wb-hz-"]::after { animation: none !important; transition: none !important; }
       }
 
       /* ============================================================= */
