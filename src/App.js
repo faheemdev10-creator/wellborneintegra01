@@ -6573,186 +6573,25 @@ function itemQrPayload(item) {
   ].join('\n');
 }
 
-const ITEM_QR_TILE_STYLE = {
-  display: 'block',
-  borderRadius: '5px',
-  border: `1px solid ${LINE}`,
-  background: 'white',
-  flexShrink: 0,
-};
-
-// React.memo with a field-by-field comparison: the QR only redraws when
-// something that is actually PRINTED in it changes (name, batch, qty,
-// unit, category, sub-category, id) or the size changes. Without this,
-// every keystroke in the search box or every realtime refresh re-drew
-// a QR code for every row in the table.
-const ItemQRCode = React.memo(
-  function ItemQRCode({ item, size = 40 }) {
-    return (
-      <QRCodeSVG
-        value={itemQrPayload(item)}
-        size={size}
-        level="M"
-        includeMargin={false}
-        bgColor="#ffffff"
-        fgColor="#000000"
-        role="img"
-        aria-label={`QR code for ${item.name || 'item'}`}
-        style={ITEM_QR_TILE_STYLE}
-      />
-    );
-  },
-  (prev, next) =>
-    prev.size === next.size &&
-    prev.item.id === next.item.id &&
-    prev.item.name === next.item.name &&
-    prev.item.batch === next.item.batch &&
-    prev.item.qty === next.item.qty &&
-    prev.item.unit === next.item.unit &&
-    prev.item.category === next.item.category &&
-    prev.item.subcategory === next.item.subcategory
-);
-
-// Enlarged QR popup, opened by clicking a QR code in the inventory table.
-// Layout notes (the things that used to go wrong with tall popups):
-//  - the dark overlay itself scrolls, and the panel is centred with
-//    `margin: auto`, so on a short window the top is always reachable
-//    instead of being clipped off-screen;
-//  - the QR scales down with the panel width on narrow phones;
-//  - long values (batch numbers, IDs) wrap inside their row instead of
-//    pushing the card wider than the popup.
-function ItemQRPopup({ item, onClose }) {
-  useEffect(() => {
-    if (!item) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [item, onClose]);
-
-  if (!item) return null;
-
-  const rows = [
-    ['Batch', item.batch || '—'],
-    ['Quantity', `${item.qty ?? '—'}${item.unit ? ' ' + item.unit : ''}`],
-    ['Category', `${item.category || '—'}${item.subcategory ? ' — ' + item.subcategory : ''}`],
-    ['Item ID', String(item.id)],
-  ];
-
+function ItemQRCode({ item, size = 40 }) {
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
+    <QRCodeSVG
+      value={itemQrPayload(item)}
+      size={size}
+      level="M"
+      includeMargin={false}
+      bgColor="#ffffff"
+      fgColor="#000000"
+      role="img"
       aria-label={`QR code for ${item.name || 'item'}`}
-      onClick={onClose}
       style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 70,
-        display: 'flex',
-        padding: '16px',
-        overflowY: 'auto',
-        background: 'rgba(4,7,17,0.5)',
-        backdropFilter: 'blur(3px)',
+        display: 'block',
+        borderRadius: '5px',
+        border: `1px solid ${LINE}`,
+        background: 'white',
+        flexShrink: 0,
       }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          position: 'relative',
-          boxSizing: 'border-box',
-          width: '100%',
-          maxWidth: '380px',
-          margin: 'auto',
-          background: 'white',
-          borderRadius: '20px',
-          padding: '20px',
-          boxShadow: '0 32px 80px rgba(4,7,17,0.35)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', marginBottom: '16px' }}>
-          <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.06em', color: '#8A8370' }}>
-              ITEM QR CODE
-            </p>
-            <h2
-              className="wb-serif"
-              style={{ margin: '4px 0 0', fontSize: '20px', color: INK, overflowWrap: 'anywhere' }}
-            >
-              {item.name || 'Unnamed item'}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              flexShrink: 0,
-              background: PAPER,
-              border: `1px solid ${LINE}`,
-              borderRadius: '8px',
-              padding: '6px',
-              cursor: 'pointer',
-              display: 'flex',
-            }}
-          >
-            <X size={16} color={INK} />
-          </button>
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            padding: '20px',
-            marginBottom: '16px',
-            background: 'white',
-            border: `1px solid ${LINE}`,
-            borderRadius: '16px',
-            boxShadow: '0 4px 14px rgba(10,18,32,0.08)',
-          }}
-        >
-          <QRCodeSVG
-            value={itemQrPayload(item)}
-            size={240}
-            level="M"
-            includeMargin={false}
-            bgColor="#ffffff"
-            fgColor="#000000"
-            role="img"
-            aria-label={`QR code for ${item.name || 'item'}`}
-            style={{ display: 'block', width: '100%', maxWidth: '240px', height: 'auto' }}
-          />
-        </div>
-
-        <div
-          style={{
-            background: PAPER,
-            border: `1px solid ${LINE}`,
-            borderRadius: '14px',
-            padding: '4px 18px',
-          }}
-        >
-          {rows.map(([label, value], i) => (
-            <div
-              key={label}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'baseline',
-                gap: '16px',
-                padding: '12px 0',
-                borderTop: i === 0 ? 'none' : `1px solid ${LINE}`,
-                fontSize: '14px',
-              }}
-            >
-              <span style={{ color: '#8A8370', flexShrink: 0 }}>{label}</span>
-              <span style={{ color: INK, fontWeight: 600, textAlign: 'right', minWidth: 0, overflowWrap: 'anywhere' }}>
-                {value}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
+    />
   );
 }
 
@@ -6824,7 +6663,6 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
   const [search, setSearch] = useState('');
   const [saveError, setSaveError] = useState('');
   const [historyItem, setHistoryItem] = useState(null);
-  const [qrItem, setQrItem] = useState(null);
 
   // Received-from-Production tracker, purely for the Vault hero's
   // "Received from Production" figure below — a lightweight read of
@@ -8336,14 +8174,7 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
                   style={{ borderTop: `1px solid ${LINE}`, cursor: 'pointer' }}
                 >
                   <td style={{ padding: '8px 10px' }} onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      title="Click to enlarge QR code"
-                      onClick={() => setQrItem(item)}
-                      style={{ display: 'block', padding: 0, margin: 0, border: 'none', background: 'none', cursor: 'zoom-in' }}
-                    >
-                      <ItemQRCode item={item} />
-                    </button>
+                    <ItemQRCode item={item} />
                   </td>
                   <td style={{ padding: '13px 16px', color: INK, fontWeight: 500 }}>
                     {item.name}
@@ -8496,7 +8327,6 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
       </div>
 
       <InventoryHistoryModal item={historyItem} onClose={() => setHistoryItem(null)} />
-      <ItemQRPopup item={qrItem} onClose={() => setQrItem(null)} />
     </div>
   );
 }
