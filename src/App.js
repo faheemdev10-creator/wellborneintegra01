@@ -20065,10 +20065,14 @@ export default function App() {
     // (snake_case) — the form works in camelCase, so translate before the
     // insert, or PostgREST rejects the request (column not found) and the
     // record is silently never saved.
-    const { workerName, issuedBy, fineAmount, ...rest } = record;
+    // rating (int4) and fine_amount (numeric) both reject an empty string —
+    // HSE_BLANK_FORM defaults them to '' even on tabs that don't use them
+    // (e.g. rating on a PPE record), so both need a null fallback here.
+    const { workerName, issuedBy, fineAmount, rating, ...rest } = record;
     const newRecord = {
       id: nextId('HSE'),
       ...rest,
+      rating: rating === '' ? null : rating,
       worker_name: workerName,
       issued_by: issuedBy,
       fine_amount: fineAmount === '' ? null : fineAmount,
@@ -20094,9 +20098,10 @@ export default function App() {
   };
 
   const handleEditHse = async (recordId, record) => {
-    const { workerName, issuedBy, fineAmount, ...rest } = record;
+    const { workerName, issuedBy, fineAmount, rating, ...rest } = record;
     const dbUpdate = {
       ...rest,
+      rating: rating === '' ? null : rating,
       worker_name: workerName,
       issued_by: issuedBy,
       fine_amount: fineAmount === '' ? null : fineAmount,
