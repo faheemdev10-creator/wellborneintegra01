@@ -13938,9 +13938,9 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    padding: '7px 10px',
+    padding: '7px 8px',
     borderRadius: 8,
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: 600,
     flexShrink: 0,
     whiteSpace: 'nowrap',
@@ -13975,13 +13975,24 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
 
       <div className="wb-po-card">
         <div className="wb-po-strip" />
-        <div style={{ overflow: 'auto' }}>
-          <table style={{ width: '100%', minWidth: 1240, fontSize: 13, borderCollapse: 'collapse' }}>
+        <div>
+          <table className="wb-po-table" style={{ width: '100%', tableLayout: 'fixed', fontSize: 13, borderCollapse: 'collapse' }}>
+            <colgroup>
+              <col style={{ width: '13.5%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '6.5%' }} />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '12.5%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '8.5%' }} />
+              <col style={{ width: '9%' }} />
+              {canManage && <col style={{ width: '23%' }} />}
+            </colgroup>
             <thead>
               <tr className="wb-po-thead" style={{ textAlign: 'left' }}>
                 <th style={th}>Product Name</th>
                 <th style={th}>Batch No.</th>
-                <th style={{ ...th, minWidth: 92 }}>Batch Size (Packs)</th>
+                <th style={th}>Batch Size (Packs)</th>
                 <th style={th}>Total Packed</th>
                 <th style={th}>Remaining to Pack</th>
                 <th style={th}>Sent to Warehouse</th>
@@ -14014,19 +14025,19 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                     className="wb-po-row"
                     style={{ '--i': Math.min(idx, 14), '--po-accent': onHold ? '#C0392B' : tier.accent, borderTop: `1px solid ${LINE}` }}
                   >
-                    <td style={{ padding: '12px 10px', minWidth: 160 }}>
+                    <td className="wb-po-td-product" style={{ padding: '12px 10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span className="wb-po-avatar" style={{ background: `linear-gradient(135deg, ${palette[0]}, ${palette[1]})` }}>
                           {(b.product_name || '?').trim().charAt(0).toUpperCase()}
                         </span>
-                        <span style={{ color: INK, fontWeight: 600 }}>{b.product_name}</span>
+                        <span style={{ color: INK, fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{b.product_name}</span>
                       </div>
                     </td>
-                    <td style={{ padding: '12px 10px' }}>
+                    <td data-label="Batch No." style={{ padding: '12px 10px' }}>
                       <span className="wb-po-batchno">{b.batch_number}</span>
                     </td>
-                    <td style={{ padding: '12px 10px', color: '#7A7460', fontVariantNumeric: 'tabular-nums' }}>{b.batch_size}</td>
-                    <td style={{ padding: '12px 10px', minWidth: 140 }}>
+                    <td data-label="Batch Size (Packs)" style={{ padding: '12px 10px', color: '#7A7460', fontVariantNumeric: 'tabular-nums' }}>{b.batch_size}</td>
+                    <td data-label="Total Packed" style={{ padding: '12px 10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ color: INK, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{b.total_packed}</span>
                         <span className="wb-po-pct" style={{ color: tier.color, background: tier.soft }}>{poFmtPct(pct)}</span>
@@ -14038,7 +14049,7 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                         />
                       </div>
                     </td>
-                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
+                    <td data-label="Remaining to Pack" style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       {done ? (
                         <span className="wb-po-chip wb-po-chip-done"><CheckCircle2 size={13} /> Completed</span>
                       ) : (
@@ -14050,12 +14061,12 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
+                    <td data-label="Sent to Warehouse" style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       <span className="wb-po-chip" style={{ color: '#0F6F8A', background: '#DDF1F7' }}>
                         <Truck size={13} /> {b.alreadySent}
                       </span>
                     </td>
-                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
+                    <td data-label="Remaining to Send" style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       <span
                         className="wb-po-chip"
                         style={remainingToSend > 0 ? { color: IPQ_RED, background: '#FBE4E4' } : { color: '#1F6B52', background: '#DDF3E8' }}
@@ -14063,7 +14074,7 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                         {b.remainingToSend} remaining
                       </span>
                     </td>
-                    <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
+                    <td data-label="Status" style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                       {done ? (
                         <span className="wb-po-status wb-po-status-done"><CheckCircle2 size={12} /> {b.status}</span>
                       ) : (
@@ -14077,7 +14088,7 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                       )}
                     </td>
                     {canManage && (
-                      <td style={{ padding: '10px 12px' }}>
+                      <td className="wb-po-td-actions" style={{ padding: '10px 12px' }}>
                         {/* Buttons are laid out in a neat two-column grid (not one long
                             line), so the row stays narrow. They flow in order:
                             Mark Completed | Send to Warehouse, then IPQ | Delete.
@@ -14944,6 +14955,8 @@ function PremiumStyles() {
       @keyframes wb-po-pop { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: none; } }
 
       .wb-po-card {
+        container-type: inline-size;
+        container-name: wbpo;
         background: white;
         border-radius: 14px;
         border: 1px solid #E9E2D0;
@@ -14973,7 +14986,7 @@ function PremiumStyles() {
       }
       .wb-po-row:hover .wb-po-avatar { transform: rotate(-6deg) scale(1.08); }
       .wb-po-batchno {
-        display: inline-block; padding: 3px 9px; border-radius: 8px;
+        display: inline-block; max-width: 100%; overflow-wrap: anywhere; padding: 3px 9px; border-radius: 8px;
         background: #F4EFE0; color: #6B6450; font-weight: 600; font-size: 12px; letter-spacing: 0.02em;
       }
 
@@ -14981,7 +14994,7 @@ function PremiumStyles() {
         font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
         font-variant-numeric: tabular-nums;
       }
-      .wb-po-bar { width: 110px; height: 8px; margin-top: 7px; border-radius: 999px; background: #EFE8D6; overflow: hidden; }
+      .wb-po-bar { width: 100%; max-width: 150px; height: 8px; margin-top: 7px; border-radius: 999px; background: #EFE8D6; overflow: hidden; }
       .wb-po-fill {
         position: relative; height: 100%; border-radius: 999px; overflow: hidden;
         transform-origin: left center;
@@ -15021,7 +15034,7 @@ function PremiumStyles() {
       @keyframes wb-po-ping { 0% { transform: scale(1); opacity: 0.7; } 75%, 100% { transform: scale(2.6); opacity: 0; } }
 
       /* Row actions: a tidy 2-column grid of equal-width buttons. */
-      .wb-po-actions-grid { display: grid; grid-template-columns: repeat(2, 146px); gap: 6px; }
+      .wb-po-actions-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
       .wb-po-more {
         display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
         padding: 12px; font-size: 12px; color: #7A7460; background: #FCF9EE; border-top: 1px solid #E9E2D0;
@@ -15031,6 +15044,47 @@ function PremiumStyles() {
         padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
       }
       .wb-po-more button:hover { background: #F4EDD8; }
+
+      /* ------------------------------------------------------------
+         NO SIDEWAYS SCROLLING, EVER.
+         Wide space: a normal table whose columns are percentages of the
+         card, so it always fits. Narrow space (the card is under 1300px
+         wide — smaller screens, or the sidebar taking room): every batch
+         becomes its own stacked card with labelled fields, so nothing is
+         cut off and there is nothing to scroll. Uses the card's OWN width
+         (container query), so it adapts to the sidebar too.
+         ------------------------------------------------------------ */
+      @container wbpo (max-width: 1300px) {
+        .wb-po-table, .wb-po-table tbody { display: block; width: 100% !important; }
+        .wb-po-table thead, .wb-po-table colgroup { display: none; }
+        .wb-po-table tr.wb-po-row {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 6px 14px;
+          padding: 14px 18px 14px 22px;
+          box-shadow: inset 4px 0 0 var(--po-accent, #C9A55C);
+        }
+        .wb-po-table tr.wb-po-row > td {
+          display: block;
+          min-width: 0 !important;
+          padding: 2px 0 !important;
+          box-shadow: none !important;
+          white-space: normal !important;
+        }
+        .wb-po-table tr.wb-po-row > td[data-label]::before {
+          content: attr(data-label);
+          display: block;
+          margin-bottom: 4px;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+          color: #9C9585;
+        }
+        .wb-po-td-product, .wb-po-td-actions { grid-column: 1 / -1; }
+        .wb-po-td-actions { padding-top: 8px !important; }
+        .wb-po-actions-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); max-width: 640px; }
+      }
 
       .wb-po-btn { color: white; border: none; cursor: pointer; }
       .wb-po-btn-complete { background: linear-gradient(135deg, #B8923F, #E3C27A); box-shadow: 0 3px 10px rgba(201, 165, 92, 0.38); }
@@ -15068,7 +15122,7 @@ function PremiumStyles() {
       }
       .wb-ipq-btn > span { position: relative; }
       .wb-ipq-badge { animation: wb-ipq-blink 1.6s ease-in-out infinite; }
-      @keyframes wb-ipq-beat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+      @keyframes wb-ipq-beat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.035); } }
       @keyframes wb-ipq-sweep { 0% { transform: translateX(-130%); } 55%, 100% { transform: translateX(130%); } }
       @keyframes wb-ipq-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
