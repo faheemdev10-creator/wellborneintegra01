@@ -1958,7 +1958,7 @@ function Sidebar({ user, page, setPage, onLogout, inboxCount, mobileOpen, onClos
             every department now — only Production can log/edit/delete
             Daily Packing or toggle IPQ, and only Warehouse can accept/
             reject a transfer; everyone else gets a read-only view. */}
-        {item('production', 'Packing Status', PackageSearch, canSeeProductionInventory(user))}
+        {item('production', 'Floor Status', PackageSearch, canSeeProductionInventory(user))}
         {/* Health & Safety is likewise visible to everyone; only the HSE
             department can add, edit or remove records (enforced inside
             HSEPage). */}
@@ -2734,7 +2734,7 @@ function ProductionSnapshotCard({ onOpenProduction }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <PackageSearch size={16} color={GOLD} />
           <p className="wb-serif" style={{ color: INK, fontSize: '17px', margin: 0 }}>
-          Packing Status — Live Snapshot
+          Floor Status — Live Snapshot
           </p>
         </div>
         <button
@@ -14189,7 +14189,7 @@ class ProductionInventoryErrorBoundary extends React.Component {
             }}
           >
             <p style={{ color: IPQ_RED, fontSize: 15, fontWeight: 700, margin: '0 0 8px' }}>
-            Packing Status couldn't load
+            Floor Status couldn't load
             </p>
             <p style={{ color: '#7A3A3A', fontSize: 13, margin: '0 0 12px' }}>
               Something in the data or connection made this page fail to
@@ -14236,8 +14236,8 @@ function PackingStatusHero({ activeBatches, transfersToday, ipqHold, completedBa
   return (
     <VaultStyleHero
       idSuffix="packing"
-      liveLabel="PACKING STATUS · LIVE"
-      title="Packing Status"
+      liveLabel="FLOOR STATUS · LIVE"
+      title="Floor Status"
       subtitle="Daily packing, batches and Warehouse transfers — tracked in real time"
       figures={figures}
       truckFigure={{
@@ -14409,7 +14409,7 @@ const ch3 = supabase
   if (!canSeeProductionInventory(user)) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: '#9C9585' }}>
-        You don't have access to Packing Status. Ask an Administrator for permission.
+        You don't have access to Floor Status. Ask an Administrator for permission.
       </div>
     );
   }
@@ -14570,8 +14570,8 @@ const ch3 = supabase
         {canManage
           ? ' Production department — full access: log, edit and delete Daily Packing entries, mark entries as IPQ, mark batches Completed, and send completed stock to Warehouse.'
           : canReceive
-          ? ' Warehouse department — you can view Packing Status and receive transferred batches below. Daily Packing itself is view only.'
-          : ` ${user.dept} — read-only view of Packing Status. Logging, editing and IPQ are handled by Production; accepting transfers is handled by Warehouse.`}
+          ? ' Warehouse department — you can view Floor Status and receive transferred batches below. Daily Packing itself is view only.'
+          : ` ${user.dept} — read-only view of Floor Status. Logging, editing and IPQ are handled by Production; accepting transfers is handled by Warehouse.`}
       </div>
 
       <div className="wb-prod-stat-grid">
@@ -19315,7 +19315,7 @@ export default function App() {
     new: 'New Activity',
     inventory: 'Warehouse Inventory',
     'warehouse-reports': 'Warehouse Reports',
-    production: 'Packing Status',
+    production: 'Floor Status',
     hse: 'Health & Safety',
     announcements: 'Announcements',
     directory: 'Department Directory',
