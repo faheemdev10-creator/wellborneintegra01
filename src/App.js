@@ -8966,7 +8966,7 @@ function PpeInsights({ hse }) {
 
 // Visible to every department, but only HSE can add, edit or remove
 // records. Real-time via the hse_records channel in App below.
-function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
+function HSEPage({ user, hse, onAdd, onEdit, onDelete, hseStatus, onReload }) {
   const [tab, setTab] = useState('riskAssessments');
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -9032,6 +9032,20 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
   return (
     <div className="wb-page-padding" style={{ padding: '28px 32px' }}>
       <HSEHero hse={hse} />
+      {hseStatus && (
+        <div className={`wb-hz-sync wb-hz-sync-${hseStatus.state === 'ok' && !hseStatus.hidden ? 'ok' : hseStatus.state === 'loading' ? 'load' : 'bad'}`}>
+          <span className="wb-hz-sync-dot" />
+          <span className="wb-hz-sync-text">
+            {hseStatus.state === 'loading' && 'Connecting to the database…'}
+            {hseStatus.state === 'error' && `Could not load records from the database: ${hseStatus.error}`}
+            {hseStatus.state === 'ok' && !hseStatus.hidden && `Synced with database · ${hseStatus.total} record${hseStatus.total === 1 ? '' : 's'} stored`}
+            {hseStatus.state === 'ok' && hseStatus.hidden > 0 && `${hseStatus.total} records in the database, but ${hseStatus.hidden} have an unrecognised category and are hidden.`}
+          </span>
+          {onReload && (
+            <button type="button" className="wb-hz-sync-btn" onClick={onReload}>Refresh</button>
+          )}
+        </div>
+      )}
       {!canManage && (
         <div
           style={{
@@ -17858,6 +17872,14 @@ function PremiumStyles() {
       .wb-hz-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 13px; font-family: inherit; color: #0A1220; }
       .wb-hz-search-clear { border: 0; background: #F4EEDC; border-radius: 50%; width: 20px; height: 20px; display: grid; place-items: center; cursor: pointer; color: #6B6553; }
 
+      .wb-hz-sync { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 9px 14px; border-radius: 13px; font-size: 12.5px; border: 1px solid #EADFC4; background: #fff; color: #4E4835; }
+      .wb-hz-sync-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #2FA37A; box-shadow: 0 0 8px rgba(47,163,122,0.8); animation: wb-hz-live 2s ease-in-out infinite; }
+      .wb-hz-sync-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .wb-hz-sync-bad { background: #FBEAEA; border-color: #E8B4B0; color: #8A2E2E; }
+      .wb-hz-sync-bad .wb-hz-sync-dot { background: #E5665B; box-shadow: 0 0 8px rgba(229,102,91,0.8); }
+      .wb-hz-sync-load .wb-hz-sync-dot { background: #F2A93B; box-shadow: 0 0 8px rgba(242,169,59,0.8); }
+      .wb-hz-sync-btn { border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 9px; padding: 4px 11px; font-size: 11.5px; font-weight: 700; font-family: inherit; cursor: pointer; transition: transform 0.16s; }
+      .wb-hz-sync-btn:hover { transform: translateY(-1px); }
       .wb-hz-form { box-shadow: 0 24px 50px -26px rgba(60,40,10,0.55) !important; border-color: #E4D3A6 !important; animation: wb-hz-rise 0.35s cubic-bezier(0.16,1,0.3,1) both; }
 
       /* ---- INSIGHTS ---- */
@@ -19509,6 +19531,10 @@ export default function App() {
     ppeWarnings: [],
     ppeFines: [],
   });
+  // Load status for the HSE page's sync strip: lets the page SHOW why
+  // records are missing (database error, blocked by row-level security,
+  // unrecognised category) instead of quietly rendering zeros.
+  const [hseStatus, setHseStatus] = useState({ state: 'loading', error: '', total: 0, hidden: 0 });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Set when Warehouse Inventory's "Open Register" shortcut is clicked —
   // consumed once by WarehouseReportsPage on mount (it jumps straight to
@@ -19933,28 +19959,42 @@ export default function App() {
 
   // ---- HSE records: load + realtime sync -------------------------------
   const loadHse = React.useCallback(async () => {
-    const { data, error } = await supabase
-      .from('hse_records')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) {
-      console.log('Error loading HSE records:', error.message);
-      return;
+    try {
+      const { data, error } = await supabase
+        .from('hse_records')
+        .select('*')
+        // hse_records has no created_at column (ordering by it made every
+        // load fail with HTTP 400 and the page show zero records after a
+        // refresh). date + id are real columns; ids embed a timestamp, so
+        // newest-first still holds within a day.
+        .order('date', { ascending: false })
+        .order('id', { ascending: false });
+      if (error) {
+        console.log('Error loading HSE records:', error.message);
+        setHseStatus({ state: 'error', error: error.message, total: 0, hidden: 0 });
+        return;
+      }
+      const grouped = { riskAssessments: [], incidents: [], permits: [], ppeIssued: [], ppeWarnings: [], ppeFines: [] };
+      let hidden = 0;
+      (data || []).forEach((row) => {
+        // hse_records stores these three fields as worker_name / issued_by /
+        // fine_amount (snake_case, matching the DB columns); the UI reads
+        // workerName / issuedBy / fineAmount (camelCase), so translate here.
+        const r = {
+          ...row,
+          workerName: row.worker_name,
+          issuedBy: row.issued_by,
+          fineAmount: row.fine_amount,
+        };
+        if (grouped[r.category]) grouped[r.category].push(r);
+        else hidden += 1;
+      });
+      setHse(grouped);
+      setHseStatus({ state: 'ok', error: '', total: (data || []).length, hidden });
+    } catch (e) {
+      console.log('Error loading HSE records:', e);
+      setHseStatus({ state: 'error', error: (e && e.message) || 'Network error', total: 0, hidden: 0 });
     }
-    const grouped = { riskAssessments: [], incidents: [], permits: [], ppeIssued: [], ppeWarnings: [], ppeFines: [] };
-    (data || []).forEach((row) => {
-      // hse_records stores these three fields as worker_name / issued_by /
-      // fine_amount (snake_case, matching the DB columns); the UI reads
-      // workerName / issuedBy / fineAmount (camelCase), so translate here.
-      const r = {
-        ...row,
-        workerName: row.worker_name,
-        issuedBy: row.issued_by,
-        fineAmount: row.fine_amount,
-      };
-      if (grouped[r.category]) grouped[r.category].push(r);
-    });
-    setHse(grouped);
   }, []);
 
   const debouncedLoadHse = useDebouncedCallback(loadHse, 250);
@@ -20611,24 +20651,39 @@ export default function App() {
       issued_by: issuedBy,
       fine_amount: fineAmount === '' ? null : fineAmount,
     };
-    const { data, error } = await supabase
-      .from('hse_records')
-      .insert([newRecord])
-      .select();
-    if (error) {
-      alert('Failed to add HSE record: ' + error.message);
-      return;
+    try {
+      const { data, error } = await supabase
+        .from('hse_records')
+        .insert([newRecord])
+        .select();
+      if (error) {
+        alert('Failed to add HSE record: ' + error.message);
+        return;
+      }
+      if (!data || !data[0]) {
+        // Insert went through but the database returned no row back
+        // (typically row-level security allowing INSERT but not SELECT).
+        // Re-read from the database so the UI shows the truth.
+        await loadHse();
+        alert(
+          'The record was sent to the database but it did not send it back, so it may not be visible. ' +
+          'This is usually a Supabase row-level-security (SELECT policy) setting on hse_records.'
+        );
+        return;
+      }
+      const saved = {
+        ...data[0],
+        workerName: data[0].worker_name,
+        issuedBy: data[0].issued_by,
+        fineAmount: data[0].fine_amount,
+      };
+      setHse((prev) => ({
+        ...prev,
+        [record.category]: [saved, ...(prev[record.category] || [])],
+      }));
+    } catch (e) {
+      alert('Failed to add HSE record: ' + ((e && e.message) || 'network error'));
     }
-    const saved = {
-      ...data[0],
-      workerName: data[0].worker_name,
-      issuedBy: data[0].issued_by,
-      fineAmount: data[0].fine_amount,
-    };
-    setHse((prev) => ({
-      ...prev,
-      [record.category]: [saved, ...(prev[record.category] || [])],
-    }));
   };
 
   const handleEditHse = async (recordId, record) => {
@@ -20811,6 +20866,8 @@ export default function App() {
             onAdd={handleAddHse}
             onEdit={handleEditHse}
             onDelete={handleDeleteHse}
+            hseStatus={hseStatus}
+            onReload={loadHse}
           />
         )}
         {page === 'announcements' && (
