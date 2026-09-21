@@ -79,6 +79,34 @@ const VIOLET = '#8B7CF6';
 const AMBER = '#8A5A24';
 const PAPER = '#FAF7EF';
 const LINE = '#E9E2D0';
+
+// ---------------------------------------------------------------------
+// PERFORMANCE — fonts. These used to be pulled in with a CSS @import
+// inside a <style> tag rendered by React, which meant the browser only
+// discovered the font files AFTER the whole JS bundle had loaded, run
+// and rendered (a slow JS -> CSS -> font chain, with text flashing in
+// the wrong font meanwhile). Adding the links here starts the download
+// the moment the bundle executes, and preconnect opens the connections
+// to Google Fonts in advance. display=swap keeps text visible.
+// ---------------------------------------------------------------------
+if (typeof document !== 'undefined' && !document.getElementById('wb-font-link')) {
+  try {
+    const addLink = (attrs) => {
+      const l = document.createElement('link');
+      Object.keys(attrs).forEach((k) => l.setAttribute(k, attrs[k]));
+      document.head.appendChild(l);
+    };
+    addLink({ rel: 'preconnect', href: 'https://fonts.googleapis.com' });
+    addLink({ rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' });
+    addLink({
+      id: 'wb-font-link',
+      rel: 'stylesheet',
+      href: 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap',
+    });
+  } catch {
+    /* fonts are cosmetic — never let this break the app */
+  }
+}
 const RED = '#8A2E2E';
 const IPQ_RED = '#B23A3A';
 
@@ -3826,7 +3854,7 @@ function DocDrawer({
               {isIpq ? (
                 <button
                   onClick={() => onResumeIPQ(doc.id)}
-                  className="wb-btn"
+                  className="wb-btn wb-ipq-fx"
                   style={{
                     width: '100%',
                     display: 'flex',
@@ -4063,7 +4091,7 @@ function DocDrawer({
                   {!needsPackingDecision && (
                   <button
                     onClick={() => setMode('ipq')}
-                    className="wb-btn"
+                    className="wb-btn wb-ipq-fx"
                     style={{
                       width: '100%',
                       display: 'flex',
@@ -6545,27 +6573,45 @@ function itemQrPayload(item) {
   ].join('\n');
 }
 
-function ItemQRCode({ item, size = 40 }) {
-  return (
-    <QRCodeSVG
-      value={itemQrPayload(item)}
-      size={size}
-      level="M"
-      includeMargin={false}
-      bgColor="#ffffff"
-      fgColor="#000000"
-      role="img"
-      aria-label={`QR code for ${item.name || 'item'}`}
-      style={{
-        display: 'block',
-        borderRadius: '5px',
-        border: `1px solid ${LINE}`,
-        background: 'white',
-        flexShrink: 0,
-      }}
-    />
-  );
-}
+const ITEM_QR_TILE_STYLE = {
+  display: 'block',
+  borderRadius: '5px',
+  border: `1px solid ${LINE}`,
+  background: 'white',
+  flexShrink: 0,
+};
+
+// React.memo with a field-by-field comparison: the QR only redraws when
+// something that is actually PRINTED in it changes (name, batch, qty,
+// unit, category, sub-category, id) or the size changes. Without this,
+// every keystroke in the search box or every realtime refresh re-drew
+// a QR code for every row in the table.
+const ItemQRCode = React.memo(
+  function ItemQRCode({ item, size = 40 }) {
+    return (
+      <QRCodeSVG
+        value={itemQrPayload(item)}
+        size={size}
+        level="M"
+        includeMargin={false}
+        bgColor="#ffffff"
+        fgColor="#000000"
+        role="img"
+        aria-label={`QR code for ${item.name || 'item'}`}
+        style={ITEM_QR_TILE_STYLE}
+      />
+    );
+  },
+  (prev, next) =>
+    prev.size === next.size &&
+    prev.item.id === next.item.id &&
+    prev.item.name === next.item.name &&
+    prev.item.batch === next.item.batch &&
+    prev.item.qty === next.item.qty &&
+    prev.item.unit === next.item.unit &&
+    prev.item.category === next.item.category &&
+    prev.item.subcategory === next.item.subcategory
+);
 
 // Enlarged QR popup, opened by clicking a QR code in the inventory table.
 // Layout notes (the things that used to go wrong with tall popups):
@@ -12214,7 +12260,7 @@ function WarehouseReportsPage({ user, inventory, onEditInventory, initialItemId,
 
 
 // =======================================================================
-// Packing Status — Daily Packing log + Batches Overview.
+// Packing Status — Daily Packing log + Packing Overview.
 // Merged directly into App.jsx (instead of a separate imported file) so
 // there is nothing extra to create or misplace — everything the app needs
 // lives in this one file.
@@ -13336,7 +13382,7 @@ function PackingHistoryModal({ entry, batch, onClose }) {
 
 // ---------------------------------------------------------------------
 // SEND TO WAREHOUSE — deliberately its own separate control, kept on
-// the Batches Overview table (not inside the Daily Packing table). It
+// the Packing Overview table (not inside the Daily Packing table). It
 // creates a warehouse_transfers row pulling product/batch/quantity
 // straight from the completed batch — nothing to do with individual
 // Daily Packing entries or their IPQ status.
@@ -13783,7 +13829,7 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
                   <td style={{ padding: '13px 16px', color: '#7A7460' }}>{batch ? batch.batch_size : '—'}</td>
                   <td style={{ padding: '13px 16px', color: '#7A7460', fontWeight: 600 }}>{e.packing_done}</td>
                   <td style={{ padding: '13px 16px' }}>
-                    <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, background: isIpq ? '#FBEAEA' : '#E9F3EC', color: isIpq ? IPQ_RED : '#1F4B3F', fontWeight: 600 }}>
+                    <span className={isIpq ? 'wb-ipq-badge' : undefined} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, background: isIpq ? '#FBEAEA' : '#E9F3EC', color: isIpq ? IPQ_RED : '#1F4B3F', fontWeight: 600 }}>
                       {isIpq ? 'IPQ — Holding' : 'Logged'}
                     </span>
                   </td>
@@ -13799,8 +13845,13 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
                           <button onClick={(ev) => { ev.stopPropagation(); onEditClick(e); }} title="Edit" style={{ background: 'none', border: 'none', color: '#5C5646', cursor: 'pointer', display: 'flex' }}>
                             <Pencil size={14} />
                           </button>
-                          <button onClick={(ev) => { ev.stopPropagation(); onIpqClick(e); }} title={isIpq ? 'Resume' : 'Mark as IPQ'} style={{ background: 'none', border: 'none', color: isIpq ? '#1F4B3F' : IPQ_RED, cursor: 'pointer', display: 'flex' }}>
-                            {isIpq ? <PlayCircle size={14} /> : <PauseCircle size={14} />}
+                          <button
+                            onClick={(ev) => { ev.stopPropagation(); onIpqClick(e); }}
+                            title={isIpq ? 'Resume this packing entry' : 'Mark as IPQ (hold)'}
+                            className={`wb-ipq-fx wb-ipq-btn ${isIpq ? 'wb-ipq-btn-resume' : ''}`}
+                          >
+                            {isIpq ? <PlayCircle size={13} /> : <PauseCircle size={13} />}
+                            <span>{isIpq ? 'Resume' : 'IPQ'}</span>
                           </button>
                           <button onClick={(ev) => { ev.stopPropagation(); onDelete(e); }} title="Delete" style={{ background: 'none', border: 'none', color: RED, cursor: 'pointer', display: 'flex' }}>
                             <Trash2 size={14} />
@@ -13819,12 +13870,47 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
   );
 }
 
+// Small helpers for the Packing Overview table ---------------------------
+// Avatar gradients: a product always gets the same colour (hashed from
+// its name), which makes rows quick to tell apart at a glance.
+const PO_PALETTE = [
+  ['#C9A55C', '#F2D999'],
+  ['#2FBF9B', '#7FE0C6'],
+  ['#5B8DEF', '#9DBBFF'],
+  ['#8B7CF6', '#C1B8FF'],
+  ['#E0703A', '#F5A778'],
+  ['#D9538B', '#F49AC0'],
+];
+function poHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i += 1) h = (h * 31 + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+// Colour tier for the progress bar: the fuller the batch, the greener.
+function poTier(pct, completed) {
+  if (completed) return { fill: 'linear-gradient(90deg,#1F8A66,#3FBE8E,#7FE0B6)', color: '#1F6B52', soft: '#E3F5EC', accent: '#3FBE8E' };
+  if (pct >= 75) return { fill: 'linear-gradient(90deg,#2FBF9B,#7FE0B6)', color: '#1F7A5F', soft: '#E3F5EC', accent: '#2FBF9B' };
+  if (pct >= 25) return { fill: 'linear-gradient(90deg,#C9A55C,#F2D999)', color: '#8C6A2E', soft: '#FBF3E3', accent: '#C9A55C' };
+  return { fill: 'linear-gradient(90deg,#E0703A,#F5A778)', color: '#B4501F', soft: '#FDEEE4', accent: '#E0703A' };
+}
+// 0% / 3.4% / 26% / 100% — one decimal only where it matters (under 10%),
+// and never rounds a not-quite-finished batch up to "100%".
+function poFmtPct(pct) {
+  if (!(pct > 0)) return '0%';
+  if (pct >= 100) return '100%';
+  if (pct < 10) return `${(Math.floor(pct * 10) / 10).toFixed(1)}%`;
+  return `${Math.floor(pct)}%`;
+}
+
 // ---------------------------------------------------------------------
-// BATCHES OVERVIEW — one row per batch with its running total (summed
-// live from Daily Packing entries), remaining-to-pack, remaining-to-send,
-// and status. "Send to Warehouse" and "Mark Completed" live here,
-// deliberately separate from the Daily Packing table above — they act on
-// the whole batch, not on an individual packing entry.
+// PACKING OVERVIEW — one row per batch with its running total (summed
+// live from Daily Packing entries), the percentage packed,
+// remaining-to-pack, remaining-to-send, and status. "Send to Warehouse"
+// and "Mark Completed" live here, deliberately separate from the Daily
+// Packing table above — they act on the whole batch, not on an
+// individual packing entry.
+// All motion here is transform/opacity only (cheap for the browser) and
+// is switched off for anyone with "reduce motion" turned on.
 // ---------------------------------------------------------------------
 function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkCompleted, onDeleteBatch }) {
   const canManage = canManageProduction(user);
@@ -13843,19 +13929,48 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
     return true;
   }), [batches, statusFilter, search]);
 
+  const counts = useMemo(() => {
+    let done = 0;
+    for (let i = 0; i < batches.length; i += 1) if (batches[i].status === 'Completed') done += 1;
+    return { total: batches.length, done, active: batches.length - done };
+  }, [batches]);
+
+  // All three row actions share one base style with FIXED widths, so
+  // Mark Completed / Send to Warehouse / Delete always sit on a single
+  // line and line up in the same columns on every row (Completed rows
+  // keep an empty slot where Mark Completed would be).
+  const btnBase = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: '7px 12px',
+    borderRadius: 8,
+    fontSize: 12,
+    fontWeight: 600,
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+    boxSizing: 'border-box',
+  };
+  const th = { padding: '13px 16px', fontSize: 11, color: '#8A8370', fontWeight: 700, letterSpacing: '0.03em' };
+  const stat = (color, bg) => ({ color, background: bg });
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <PackageSearch size={16} color={GOLD} />
-          <p style={{ fontFamily: "'Playfair Display', serif", color: INK, fontSize: 17, margin: 0 }}>Batches Overview</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span className="wb-po-head-icon"><PackageSearch size={18} color={GOLD} /></span>
+          <p className="wb-po-title">Packing Overview</p>
+          <span className="wb-po-stat" style={stat('#5C5646', '#F1ECDC')}>{counts.total} batches</span>
+          <span className="wb-po-stat" style={stat('#8C5A1E', '#FBE9C4')}>{counts.active} active</span>
+          <span className="wb-po-stat" style={stat('#1F6B52', '#DDF3E8')}>{counts.done} completed</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ position: 'relative' }}>
             <Search size={13} color="#9C9585" style={{ position: 'absolute', left: 10, top: 9 }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search product or batch…" style={{ padding: '8px 10px 8px 30px', border: `1px solid ${LINE}`, borderRadius: 6, fontSize: 12, width: 190 }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search product or batch…" style={{ padding: '8px 10px 8px 30px', border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 12, width: 190 }} />
           </div>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 6, fontSize: 12 }}>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 12 }}>
             <option value="All">All statuses</option>
             <option value="Active">Active</option>
             <option value="Completed">Completed</option>
@@ -13863,88 +13978,141 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
         </div>
       </div>
 
-      <div style={{ background: 'white', borderRadius: 12, border: `1px solid ${LINE}`, overflow: 'auto' }}>
-        <table style={{ width: '100%', minWidth: 860, fontSize: 13, borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ background: PAPER, textAlign: 'left' }}>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Product Name</th>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Batch No.</th>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Batch Size (Packs)</th>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Total Packed</th>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Remaining to Pack</th>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Sent to Warehouse</th>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Remaining to Send</th>
-              <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}>Status</th>
-              {canManage && <th style={{ padding: '12px 16px', fontSize: 11, color: '#8A8370' }}> </th>}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: '#9C9585' }}>No batches match this filter.</td></tr>
-            )}
-            {filtered.map((b) => {
-              const pct = b.batch_size ? Math.min(100, (b.total_packed / b.batch_size) * 100) : 0;
-              const readyToComplete = b.status === 'Active' && Number(b.total_packed) >= Number(b.batch_size);
-              return (
-                <tr key={b.id} style={{ borderTop: `1px solid ${LINE}` }}>
-                  <td style={{ padding: '13px 16px', color: INK, fontWeight: 500 }}>{b.product_name}</td>
-                  <td style={{ padding: '13px 16px', color: '#7A7460' }}>{b.batch_number}</td>
-                  <td style={{ padding: '13px 16px', color: '#7A7460' }}>{b.batch_size}</td>
-                  <td style={{ padding: '13px 16px', color: '#7A7460' }}>
-                    {b.total_packed}
-                    <div style={{ height: 4, background: LINE, borderRadius: 2, marginTop: 4, width: 80 }}>
-                      <div style={{ height: 4, width: `${pct}%`, background: GOLD, borderRadius: 2 }} />
-                    </div>
-                  </td>
-                  <td style={{ padding: '13px 16px', color: Number(b.remainingToPack) > 0 ? AMBER : '#1F4B3F', fontWeight: 600 }}>
-                    {b.remainingToPack} left to pack
-                  </td>
-                  <td style={{ padding: '13px 16px', color: '#1F4B3F', fontWeight: 600 }}>
-                    {b.alreadySent}
-                  </td>
-                  <td style={{ padding: '13px 16px', color: Number(b.remainingToSend) > 0 ? IPQ_RED : '#1F4B3F', fontWeight: 600 }}>
-                    {b.remainingToSend} remaining
-                  </td>
-                  <td style={{ padding: '13px 16px' }}>
-                    <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, background: b.status === 'Completed' ? '#E9F3EC' : '#FBF3E3', color: b.status === 'Completed' ? '#1F4B3F' : AMBER }}>
-                      {b.status}
-                    </span>
-                  </td>
-                  {canManage && (
-                    <td style={{ padding: '13px 16px' }}>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {b.status === 'Active' && (
-                          <button
-                            onClick={() => onMarkCompleted(b)}
-                            title={readyToComplete ? 'Mark this batch Completed' : `Still ${b.batch_size - b.total_packed} packs left to pack — you can still mark it complete manually`}
-                            style={{ display: 'flex', alignItems: 'center', gap: 6, background: readyToComplete ? '#1F4B3F' : GOLD, color: 'white', border: 'none', padding: '7px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
-                          >
-                            <CheckCircle2 size={13} /> Mark Completed
-                          </button>
-                        )}
-                        <button
-                          onClick={() => onSendToWarehouse(b)}
-                          disabled={Number(b.remainingToSend) <= 0}
-                          title={Number(b.remainingToSend) <= 0 ? (Number(b.total_packed) <= 0 ? 'Nothing packed yet for this batch' : 'Everything packed so far has already been sent') : `Send the ${b.remainingToSend} packs not yet sent`}
-                          style={{ display: 'flex', alignItems: 'center', gap: 6, background: Number(b.remainingToSend) > 0 ? INK : '#D8D2C0', color: 'white', border: 'none', padding: '7px 12px', borderRadius: 6, cursor: Number(b.remainingToSend) > 0 ? 'pointer' : 'not-allowed', fontSize: 12 }}
-                        >
-                          <Truck size={13} /> Send to Warehouse
-                        </button>
-                        <button
-                          onClick={() => onDeleteBatch(b)}
-                          title="Delete this batch"
-                          style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'white', border: `1px solid ${RED}`, color: RED, padding: '7px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
+      <div className="wb-po-card">
+        <div className="wb-po-strip" />
+        <div style={{ overflow: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 1240, fontSize: 13, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr className="wb-po-thead" style={{ textAlign: 'left' }}>
+                <th style={th}>Product Name</th>
+                <th style={th}>Batch No.</th>
+                <th style={th}>Batch Size (Packs)</th>
+                <th style={th}>Total Packed</th>
+                <th style={th}>Remaining to Pack</th>
+                <th style={th}>Sent to Warehouse</th>
+                <th style={th}>Remaining to Send</th>
+                <th style={th}>Status</th>
+                {canManage && <th style={th}> </th>}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: '#9C9585' }}>No batches match this filter.</td></tr>
+              )}
+              {filtered.map((b, idx) => {
+                const done = b.status === 'Completed';
+                const size = Number(b.batch_size) || 0;
+                const packed = Number(b.total_packed) || 0;
+                const pct = size ? (packed / size) * 100 : 0;
+                const barPct = Math.max(0, Math.min(100, pct));
+                const tier = poTier(pct, done);
+                const readyToComplete = b.status === 'Active' && packed >= size;
+                const palette = PO_PALETTE[poHash(b.product_name || '') % PO_PALETTE.length];
+                const remainingToPack = Number(b.remainingToPack);
+                const remainingToSend = Number(b.remainingToSend);
+                return (
+                  <tr
+                    key={b.id}
+                    className="wb-po-row"
+                    style={{ '--i': Math.min(idx, 14), '--po-accent': tier.accent, borderTop: `1px solid ${LINE}` }}
+                  >
+                    <td style={{ padding: '13px 16px', minWidth: 190 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span className="wb-po-avatar" style={{ background: `linear-gradient(135deg, ${palette[0]}, ${palette[1]})` }}>
+                          {(b.product_name || '?').trim().charAt(0).toUpperCase()}
+                        </span>
+                        <span style={{ color: INK, fontWeight: 600 }}>{b.product_name}</span>
                       </div>
                     </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td style={{ padding: '13px 16px' }}>
+                      <span className="wb-po-batchno">{b.batch_number}</span>
+                    </td>
+                    <td style={{ padding: '13px 16px', color: '#7A7460', fontVariantNumeric: 'tabular-nums' }}>{b.batch_size}</td>
+                    <td style={{ padding: '13px 16px', minWidth: 170 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ color: INK, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{b.total_packed}</span>
+                        <span className="wb-po-pct" style={{ color: tier.color, background: tier.soft }}>{poFmtPct(pct)}</span>
+                      </div>
+                      <div className="wb-po-bar">
+                        <div
+                          className={`wb-po-fill${done ? '' : ' wb-po-fill-live'}`}
+                          style={{ width: `${barPct}%`, minWidth: barPct > 0 ? 4 : 0, background: tier.fill }}
+                        />
+                      </div>
+                    </td>
+                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                      {done ? (
+                        <span className="wb-po-chip wb-po-chip-done"><CheckCircle2 size={13} /> Completed</span>
+                      ) : (
+                        <span
+                          className="wb-po-chip"
+                          style={remainingToPack > 0 ? { color: '#8C5A1E', background: '#FBEBC8' } : { color: '#1F6B52', background: '#DDF3E8' }}
+                        >
+                          {b.remainingToPack} left to pack
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                      <span className="wb-po-chip" style={{ color: '#0F6F8A', background: '#DDF1F7' }}>
+                        <Truck size={13} /> {b.alreadySent}
+                      </span>
+                    </td>
+                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                      <span
+                        className="wb-po-chip"
+                        style={remainingToSend > 0 ? { color: IPQ_RED, background: '#FBE4E4' } : { color: '#1F6B52', background: '#DDF3E8' }}
+                      >
+                        {b.remainingToSend} remaining
+                      </span>
+                    </td>
+                    <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                      {done ? (
+                        <span className="wb-po-status wb-po-status-done"><CheckCircle2 size={12} /> {b.status}</span>
+                      ) : (
+                        <span className="wb-po-status wb-po-status-active"><i className="wb-po-dot" /> {b.status}</span>
+                      )}
+                    </td>
+                    {canManage && (
+                      <td style={{ padding: '13px 16px', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
+                          {b.status === 'Active' ? (
+                            <button
+                              onClick={() => onMarkCompleted(b)}
+                              title={readyToComplete ? 'Mark this batch Completed' : `Still ${size - packed} packs left to pack — you can still mark it complete manually`}
+                              className={`wb-po-btn ${readyToComplete ? 'wb-po-btn-complete-ready' : 'wb-po-btn-complete'}`}
+                              style={{ ...btnBase, width: 142 }}
+                            >
+                              <CheckCircle2 size={13} /> Mark Completed
+                            </button>
+                          ) : (
+                            <span aria-hidden="true" style={{ width: 142, flexShrink: 0 }} />
+                          )}
+                          <button
+                            onClick={() => onSendToWarehouse(b)}
+                            disabled={remainingToSend <= 0}
+                            title={remainingToSend <= 0 ? (packed <= 0 ? 'Nothing packed yet for this batch' : 'Everything packed so far has already been sent') : `Send the ${b.remainingToSend} packs not yet sent`}
+                            className="wb-po-btn wb-po-btn-send"
+                            style={{ ...btnBase, width: 160 }}
+                          >
+                            <Truck size={13} /> Send to Warehouse
+                          </button>
+                          <button
+                            onClick={() => onDeleteBatch(b)}
+                            title="Delete this batch"
+                            className="wb-po-btn wb-po-btn-del"
+                            style={{ ...btnBase, width: 92 }}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -14503,8 +14671,6 @@ function ProductionInventoryPage({ user }) {
 function PremiumStyles() {
   return (
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
-
       body, input, textarea, select, button {
         font-family: 'Inter', system-ui, sans-serif;
       }
@@ -14710,6 +14876,157 @@ function PremiumStyles() {
 
       .wb-inv-row { transition: background 0.15s ease; }
       .wb-inv-row:hover { background: #FBF3E3 !important; }
+
+      /* ============================================================
+         PACKING OVERVIEW — colourful, animated table.
+         Everything animated below uses transform / opacity only, which
+         the browser can run on the GPU without repainting the page.
+         ============================================================ */
+      .wb-po-title {
+        font-family: 'Playfair Display', serif;
+        font-size: 19px;
+        margin: 0;
+        background: linear-gradient(90deg, #0A1220 0%, #8C6A2E 55%, #C9A55C 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+      }
+      .wb-po-head-icon { display: inline-flex; animation: wb-po-float 3.2s ease-in-out infinite; }
+      @keyframes wb-po-float {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        50% { transform: translateY(-2px) rotate(-8deg); }
+      }
+      .wb-po-stat {
+        font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+        animation: wb-po-pop 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+      }
+      @keyframes wb-po-pop { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: none; } }
+
+      .wb-po-card {
+        background: white;
+        border-radius: 14px;
+        border: 1px solid #E9E2D0;
+        overflow: hidden;
+        box-shadow: 0 8px 28px rgba(140, 106, 46, 0.09);
+      }
+      .wb-po-strip {
+        height: 4px;
+        background: linear-gradient(90deg, #C9A55C, #2FBF9B, #5B8DEF, #8B7CF6, #D9538B);
+      }
+      .wb-po-thead { background: linear-gradient(180deg, #FCF9EE, #F5EFDD); }
+
+      .wb-po-row {
+        animation: wb-po-row-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        animation-delay: calc(var(--i, 0) * 45ms);
+        transition: background 0.2s ease;
+      }
+      @keyframes wb-po-row-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+      .wb-po-row > td:first-child { box-shadow: inset 4px 0 0 var(--po-accent, #C9A55C); }
+      .wb-po-row:hover { background: #FBF6E8; }
+      .wb-po-avatar {
+        width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+        display: inline-flex; align-items: center; justify-content: center;
+        color: white; font-weight: 700; font-size: 13px;
+        box-shadow: 0 3px 10px rgba(10, 18, 32, 0.18);
+        transition: transform 0.25s ease;
+      }
+      .wb-po-row:hover .wb-po-avatar { transform: rotate(-6deg) scale(1.08); }
+      .wb-po-batchno {
+        display: inline-block; padding: 3px 9px; border-radius: 8px;
+        background: #F4EFE0; color: #6B6450; font-weight: 600; font-size: 12px; letter-spacing: 0.02em;
+      }
+
+      .wb-po-pct {
+        font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+        font-variant-numeric: tabular-nums;
+      }
+      .wb-po-bar { width: 130px; height: 8px; margin-top: 7px; border-radius: 999px; background: #EFE8D6; overflow: hidden; }
+      .wb-po-fill {
+        position: relative; height: 100%; border-radius: 999px; overflow: hidden;
+        transform-origin: left center;
+        animation: wb-po-grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        animation-delay: calc(var(--i, 0) * 45ms + 200ms);
+      }
+      @keyframes wb-po-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+      .wb-po-fill-live::after {
+        content: ''; position: absolute; inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+        transform: translateX(-100%);
+        animation: wb-po-shimmer 2.8s ease-in-out infinite;
+        animation-delay: calc(var(--i, 0) * 120ms + 1.2s);
+      }
+      @keyframes wb-po-shimmer { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
+
+      .wb-po-chip {
+        display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+        font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+        font-variant-numeric: tabular-nums;
+      }
+      .wb-po-chip-done {
+        color: white; background: linear-gradient(135deg, #1F8A66, #3FBE8E);
+        box-shadow: 0 2px 8px rgba(31, 138, 102, 0.3);
+      }
+      .wb-po-status {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+      }
+      .wb-po-status-active { color: #8C5A1E; background: linear-gradient(135deg, #FFF3D6, #FBE3B0); }
+      .wb-po-status-done { color: #1F6B52; background: linear-gradient(135deg, #E3F5EC, #C9EEDB); }
+      .wb-po-dot { position: relative; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #E0A03A; }
+      .wb-po-dot::after {
+        content: ''; position: absolute; inset: 0; border-radius: 50%; background: #E0A03A;
+        animation: wb-po-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+      }
+      @keyframes wb-po-ping { 0% { transform: scale(1); opacity: 0.7; } 75%, 100% { transform: scale(2.6); opacity: 0; } }
+
+      .wb-po-btn { color: white; border: none; cursor: pointer; }
+      .wb-po-btn-complete { background: linear-gradient(135deg, #B8923F, #E3C27A); box-shadow: 0 3px 10px rgba(201, 165, 92, 0.38); }
+      .wb-po-btn-complete-ready { background: linear-gradient(135deg, #1F8A66, #3FBE8E); box-shadow: 0 3px 10px rgba(31, 138, 102, 0.38); }
+      .wb-po-btn-send { background: linear-gradient(135deg, #2F6FED, #7C5CF0); box-shadow: 0 3px 10px rgba(80, 90, 240, 0.34); }
+      .wb-po-btn-send:disabled { background: #D8D2C0; box-shadow: none; cursor: not-allowed; }
+      .wb-po-btn-del { background: white; color: #8A2E2E; border: 1px solid #8A2E2E; }
+      .wb-po-btn-del:hover { background: #8A2E2E; color: white; }
+
+      /* ============================================================
+         IPQ BUTTON — animated. A soft heartbeat, a light sweep across
+         the face and a blinking icon so it reads as "live / needs
+         attention". Red = put on hold, green = resume.
+         ============================================================ */
+      .wb-ipq-fx {
+        position: relative; overflow: hidden;
+        animation: wb-ipq-beat 1.9s ease-in-out infinite;
+      }
+      .wb-ipq-fx::before {
+        content: ''; position: absolute; inset: 0; pointer-events: none;
+        background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.55) 50%, transparent 75%);
+        transform: translateX(-130%);
+        animation: wb-ipq-sweep 2.6s ease-in-out infinite;
+      }
+      .wb-ipq-fx svg { animation: wb-ipq-blink 1.9s ease-in-out infinite; }
+      .wb-ipq-btn {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 5px 11px 5px 9px; border-radius: 999px; border: none; cursor: pointer;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: white;
+        background: linear-gradient(135deg, #C0392B, #EA6B5B);
+        box-shadow: 0 2px 10px rgba(192, 57, 43, 0.42);
+      }
+      .wb-ipq-btn-resume {
+        background: linear-gradient(135deg, #1F8A66, #3FBE8E);
+        box-shadow: 0 2px 10px rgba(31, 138, 102, 0.42);
+      }
+      .wb-ipq-btn > span { position: relative; }
+      .wb-ipq-badge { animation: wb-ipq-blink 1.6s ease-in-out infinite; }
+      @keyframes wb-ipq-beat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+      @keyframes wb-ipq-sweep { 0% { transform: translateX(-130%); } 55%, 100% { transform: translateX(130%); } }
+      @keyframes wb-ipq-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+      @media (prefers-reduced-motion: reduce) {
+        .wb-po-row, .wb-po-stat, .wb-po-fill, .wb-po-fill-live::after, .wb-po-dot::after,
+        .wb-po-head-icon, .wb-ipq-fx, .wb-ipq-fx::before, .wb-ipq-fx svg, .wb-ipq-badge {
+          animation: none !important;
+        }
+      }
 
       .wb-mini-stat { transition: transform 0.2s ease, box-shadow 0.2s ease; }
       .wb-mini-stat:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(10,18,32,0.1); }
