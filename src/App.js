@@ -14675,6 +14675,33 @@ const ch3 = supabase
     });
   }, [batches, sentByBatch]);
 
+  // SPEED: batchById reuses the same map built for batchesWithSendInfo's
+  // lookups elsewhere in this file — batchForEntry used to do a linear
+  // batches.find() every time the History modal opened, rescanning every
+  // batch. A map makes that a constant-time lookup instead.
+  // Hoisted above the early-return permission gate below, for the same
+  // reason as sentByBatch/batchesWithSendInfo above: hooks must run in
+  // the same order on every render, access or no access.
+  const batchById = useMemo(() => {
+    const m = {};
+    for (let i = 0; i < batches.length; i += 1) m[batches[i].id] = batches[i];
+    return m;
+  }, [batches]);
+  const batchForEntry = (entry) => batchById[entry.batch_id];
+
+  const canSeeWarehouseFeatures = canManage || canReceive;
+
+  // SPEED: these four counts used to be plain .filter().length calls sitting
+  // in the component body, which means every one of them re-scanned the
+  // full entries/batches/transfers arrays on EVERY render of this page —
+  // including renders caused by something unrelated, like opening a modal
+  // or typing in a search box elsewhere on the page. useMemo means they
+  // only recompute when the underlying data actually changes.
+  const activeIpqEntries = useMemo(() => entries.filter((e) => e.status === 'IPQ').length, [entries]);
+  const activeBatches = useMemo(() => batches.filter((b) => b.status === 'Active').length, [batches]);
+  const completedBatches = useMemo(() => batches.filter((b) => b.status === 'Completed').length, [batches]);
+  const transfersToday = useMemo(() => transfers.filter((t) => isToday(t.sent_at)).length, [transfers]);
+
   if (!canSeeProductionInventory(user)) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: '#9C9585' }}>
@@ -14805,30 +14832,6 @@ const ch3 = supabase
       },
     });
   };
-
-  // SPEED: batchById reuses the same map built for batchesWithSendInfo's
-  // lookups elsewhere in this file — batchForEntry used to do a linear
-  // batches.find() every time the History modal opened, rescanning every
-  // batch. A map makes that a constant-time lookup instead.
-  const batchById = useMemo(() => {
-    const m = {};
-    for (let i = 0; i < batches.length; i += 1) m[batches[i].id] = batches[i];
-    return m;
-  }, [batches]);
-  const batchForEntry = (entry) => batchById[entry.batch_id];
-
-  const canSeeWarehouseFeatures = canManage || canReceive;
-
-  // SPEED: these four counts used to be plain .filter().length calls sitting
-  // in the component body, which means every one of them re-scanned the
-  // full entries/batches/transfers arrays on EVERY render of this page —
-  // including renders caused by something unrelated, like opening a modal
-  // or typing in a search box elsewhere on the page. useMemo means they
-  // only recompute when the underlying data actually changes.
-  const activeIpqEntries = useMemo(() => entries.filter((e) => e.status === 'IPQ').length, [entries]);
-  const activeBatches = useMemo(() => batches.filter((b) => b.status === 'Active').length, [batches]);
-  const completedBatches = useMemo(() => batches.filter((b) => b.status === 'Completed').length, [batches]);
-  const transfersToday = useMemo(() => transfers.filter((t) => isToday(t.sent_at)).length, [transfers]);
 
   return (
     <div className="wb-prod-page" style={{ padding: '28px 32px' }}>
