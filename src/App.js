@@ -65,6 +65,7 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 const INK = '#0A1220';
 const INK_DEEP = '#040711';
@@ -6530,12 +6531,22 @@ function RegisterPostPreview({ form, editingId, existingItem }) {
 // Every product — existing stock and anything added from here on — gets
 // its own scannable QR code, generated on the fly from the item's own
 // data (id/name/batch/qty). Nothing is stored for this: the code is
-// just an image whose URL encodes the payload, from a free public QR
-// image API, so it needs no new Supabase column, no library, and no
+// derived at render time, so it needs no new Supabase column and no
 // backfill — it "exists" for every item automatically, past and
-// future, purely because it's derived at render time. Scanning it with
-// any phone camera (no app needed) shows the item's name, batch, qty
-// and ID as plain text.
+// future. Scanning it with any phone camera (no app needed) shows the
+// item's name, batch, qty and ID as plain text.
+//
+// Generated entirely client-side with qrcode.react (`npm install
+// qrcode.react`) rather than pulled from a remote image API — the
+// previous version pointed every row's <img> at a public QR image
+// service, which meant every single code depended on this machine
+// having outbound internet to that one third-party host at the exact
+// moment the row rendered. On Wellborne's internal LAN that's not a
+// safe assumption, so codes were silently disappearing (onError just
+// hid the broken image) — not for "a handful of items", but
+// unpredictably, for any product, any time that request failed. QR
+// generation is pure math done in the browser, so it now always
+// succeeds, for every product, with zero network dependency.
 function itemQrPayload(item) {
   return [
     item.name || 'Unnamed item',
@@ -6547,26 +6558,31 @@ function itemQrPayload(item) {
 }
 
 function ItemQRCode({ item, size = 40 }) {
-  const src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=0&data=${encodeURIComponent(itemQrPayload(item))}`;
   return (
-    <img
-      src={src}
-      alt={`QR code for ${item.name || 'item'}`}
-      width={size}
-      height={size}
-      loading="lazy"
+    <div
+      title={`QR code for ${item.name || 'item'}`}
       style={{
-        display: 'block',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: size,
+        height: size,
+        padding: 2,
+        boxSizing: 'border-box',
         borderRadius: '5px',
         border: `1px solid ${LINE}`,
         background: 'white',
         flexShrink: 0,
       }}
-      // A handful of items typed with no name yet, or the free QR API
-      // being briefly unreachable, shouldn't break the row — hide the
-      // broken-image icon rather than show a visibly failed <img>.
-      onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
-    />
+    >
+      <QRCodeSVG
+        value={itemQrPayload(item)}
+        size={size - 4}
+        level="M"
+        bgColor="#FFFFFF"
+        fgColor="#0A1220"
+      />
+    </div>
   );
 }
 
