@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { supabase } from './supabaseClient';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   LayoutDashboard,
   FileText,
@@ -65,7 +66,6 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 
 const INK = '#0A1220';
 const INK_DEEP = '#040711';
@@ -6531,22 +6531,10 @@ function RegisterPostPreview({ form, editingId, existingItem }) {
 // Every product — existing stock and anything added from here on — gets
 // its own scannable QR code, generated on the fly from the item's own
 // data (id/name/batch/qty). Nothing is stored for this: the code is
-// derived at render time, so it needs no new Supabase column and no
-// backfill — it "exists" for every item automatically, past and
-// future. Scanning it with any phone camera (no app needed) shows the
-// item's name, batch, qty and ID as plain text.
-//
-// Generated entirely client-side with qrcode.react (`npm install
-// qrcode.react`) rather than pulled from a remote image API — the
-// previous version pointed every row's <img> at a public QR image
-// service, which meant every single code depended on this machine
-// having outbound internet to that one third-party host at the exact
-// moment the row rendered. On Wellborne's internal LAN that's not a
-// safe assumption, so codes were silently disappearing (onError just
-// hid the broken image) — not for "a handful of items", but
-// unpredictably, for any product, any time that request failed. QR
-// generation is pure math done in the browser, so it now always
-// succeeds, for every product, with zero network dependency.
+// drawn in the browser by the qrcode.react library at render time, so it
+// needs no new Supabase column, no backfill, and no outside service.
+// Scanning it with any phone camera (no app needed) shows the item's
+// name, batch, qty and ID as plain text.
 function itemQrPayload(item) {
   return [
     item.name || 'Unnamed item',
@@ -6558,92 +6546,24 @@ function itemQrPayload(item) {
 }
 
 function ItemQRCode({ item, size = 40 }) {
-  const [open, setOpen] = useState(false);
-  const payload = itemQrPayload(item);
   return (
-    <>
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-        title={`Open QR code for ${item.name || 'item'}`}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: size,
-          height: size,
-          padding: 2,
-          boxSizing: 'border-box',
-          borderRadius: '5px',
-          border: `1px solid ${LINE}`,
-          background: 'white',
-          flexShrink: 0,
-          cursor: 'pointer',
-        }}
-      >
-        <QRCodeSVG
-          value={payload}
-          size={size - 4}
-          level="M"
-          bgColor="#FFFFFF"
-          fgColor="#0A1220"
-        />
-      </button>
-      {open && <ItemQRModal item={item} payload={payload} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------
-// THE "OPEN" VIEW — clicking the small in-row QR now opens this: a
-// full-size, scannable code on its own card, laid out with the same
-// ink/gold hero treatment used elsewhere in the app, plus the item's
-// details spelled out underneath (in case someone wants to read them
-// rather than scan). Purely a nicer way to look at the same payload —
-// nothing new is fetched or stored.
-// ---------------------------------------------------------------------
-function ItemQRModal({ item, payload, onClose }) {
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(4,7,17,0.65)', backdropFilter: 'blur(4px)' }} />
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ position: 'relative', width: '100%', maxWidth: 380, borderRadius: 20, overflow: 'hidden', background: 'white', boxShadow: '0 40px 90px rgba(4,7,17,0.45)' }}
-      >
-        <div style={{ padding: '22px 26px', background: `linear-gradient(120deg, ${INK_DEEP} 0%, ${INK} 60%, ${MIDNIGHT} 100%)`, position: 'relative', overflow: 'hidden' }}>
-          <div className="wb-prod-hero-gridlines" />
-          <button
-            onClick={onClose}
-            style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 8, padding: 6, cursor: 'pointer', display: 'flex', zIndex: 2 }}
-          >
-            <X size={16} color="#F8F4E9" />
-          </button>
-          <p style={{ position: 'relative', zIndex: 2, color: '#9EEBE0', fontSize: 11, letterSpacing: '0.14em', margin: 0 }}>SCAN TO IDENTIFY</p>
-          <h3 className="wb-serif" style={{ position: 'relative', zIndex: 2, color: '#F8F4E9', fontSize: 20, margin: '6px 0 0', paddingRight: 30 }}>
-            {item.name || 'Unnamed item'}
-          </h3>
-        </div>
-        <div style={{ padding: '28px 26px', textAlign: 'center' }}>
-          <div style={{ display: 'inline-flex', padding: 16, background: 'white', border: `1px solid ${LINE}`, borderRadius: 16, boxShadow: '0 10px 30px rgba(10,18,32,0.08)' }}>
-            <QRCodeSVG value={payload} size={220} level="M" bgColor="#FFFFFF" fgColor="#0A1220" />
-          </div>
-          <div style={{ marginTop: 20, textAlign: 'left', background: PAPER, border: `1px solid ${LINE}`, borderRadius: 12, padding: '4px 16px' }}>
-            <QRDetailRow label="Batch" value={item.batch || '—'} />
-            <QRDetailRow label="Quantity" value={`${item.qty ?? '—'}${item.unit ? ' ' + item.unit : ''}`} />
-            <QRDetailRow label="Category" value={`${item.category || '—'}${item.subcategory ? ' — ' + item.subcategory : ''}`} />
-            <QRDetailRow label="Item ID" value={item.id} last />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-function QRDetailRow({ label, value, last }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '10px 0', borderBottom: last ? 'none' : `1px solid ${LINE}`, fontSize: 12.5 }}>
-      <span style={{ color: '#8A8370' }}>{label}</span>
-      <span style={{ color: INK, fontWeight: 600, textAlign: 'right' }}>{value}</span>
-    </div>
+    <QRCodeSVG
+      value={itemQrPayload(item)}
+      size={size}
+      level="M"
+      includeMargin={false}
+      bgColor="#ffffff"
+      fgColor="#000000"
+      role="img"
+      aria-label={`QR code for ${item.name || 'item'}`}
+      style={{
+        display: 'block',
+        borderRadius: '5px',
+        border: `1px solid ${LINE}`,
+        background: 'white',
+        flexShrink: 0,
+      }}
+    />
   );
 }
 
@@ -13179,121 +13099,6 @@ function PackingIPQModal({ user, entry, onClose, onSaved }) {
 }
 
 // ---------------------------------------------------------------------
-// MARK / RESUME IPQ ON A WHOLE BATCH — same red "on hold" pattern as
-// PackingIPQModal above, one level up: this holds every pack of a batch
-// at once (Packing Overview), rather than a single Daily Packing entry.
-// Writes straight onto production_batches.status / ipq_reason. Two
-// things this needs on the database side before it will work:
-//
-//   1. An `ipq_reason` text column on production_batches (mirroring
-//      the one that already exists on production_packing_entries),
-//      and, if `status` has a CHECK constraint limiting it to
-//      ('Active','Completed'), 'IPQ' added to that list:
-//        alter table production_batches add column if not exists ipq_reason text;
-//        alter table production_batches drop constraint if exists production_batches_status_check;
-//        alter table production_batches add constraint production_batches_status_check
-//          check (status in ('Active','IPQ','Completed'));
-//   2. If production_batch_status is a view with an explicit column
-//      list (rather than `select *`), add ipq_reason to that list too
-//      — otherwise loadBatches() below will never see it, even though
-//      the write above succeeds.
-//
-// While a batch is on hold it can't be marked Completed (that button
-// only ever shows for status = 'Active') or sent to Warehouse
-// (BatchesOverviewTable disables that button while isIpq), so nothing
-// on a held batch can move until someone resumes it here.
-// ---------------------------------------------------------------------
-function BatchIPQModal({ user, batch, onClose, onSaved }) {
-  const [reason, setReason] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const isResuming = batch.status === 'IPQ';
-
-  const submit = async () => {
-    setSaving(true);
-    setError('');
-    const { error: err } = await supabase
-      .from('production_batches')
-      .update({
-        status: isResuming ? 'Active' : 'IPQ',
-        ipq_reason: isResuming ? null : reason,
-      })
-      .eq('id', batch.id);
-
-    setSaving(false);
-    if (err) {
-      setError(err.message);
-      return;
-    }
-    await logAudit({
-      action: isResuming ? 'Batch Resumed' : 'Batch IPQ',
-      table: 'production_batches',
-      recordId: batch.id,
-      user,
-      newValue: { status: isResuming ? 'Active' : 'IPQ', reason },
-    });
-    onSaved();
-    onClose();
-  };
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(4,7,17,0.5)' }} />
-      <div style={{ position: 'relative', background: 'white', borderRadius: 14, width: '100%', maxWidth: 440, padding: 24, boxShadow: '0 32px 80px rgba(4,7,17,0.35)' }}>
-        <p style={{
-          color: isResuming ? '#1F4B3F' : IPQ_RED,
-          fontSize: 15,
-          fontWeight: 700,
-          margin: '0 0 6px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-        }}>
-          {isResuming ? <PlayCircle size={17} /> : <PauseCircle size={17} />}
-          {isResuming ? 'Resume this batch' : 'Put this batch on IPQ hold'}
-        </p>
-        <p style={{ color: '#7A7460', fontSize: 13, margin: '0 0 16px' }}>
-          {batch.product_name} — Batch {batch.batch_number} · {batch.total_packed} of {batch.batch_size} packed
-        </p>
-        {error && <div style={{ background: '#FBEAEA', color: IPQ_RED, fontSize: 12, padding: '8px 10px', borderRadius: 6, marginBottom: 12 }}>{error}</div>}
-
-        {!isResuming && (
-          <>
-            <label style={{ fontSize: 11, color: '#8A8370' }}>Reason for holding this batch</label>
-            <textarea
-              rows={3}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Quality query raised, awaiting QA sign-off…"
-              style={{ width: '100%', padding: 8, marginTop: 4, marginBottom: 16, border: `1px solid ${IPQ_RED}`, borderRadius: 6, boxSizing: 'border-box' }}
-            />
-          </>
-        )}
-
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            disabled={saving}
-            onClick={submit}
-            style={{
-              background: saving ? '#D8D2C0' : isResuming ? '#1F4B3F' : IPQ_RED,
-              color: 'white',
-              border: 'none',
-              padding: '9px 16px',
-              borderRadius: 8,
-              cursor: saving ? 'not-allowed' : 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            {saving ? 'Saving…' : isResuming ? 'Confirm — Resume' : 'Confirm — Mark as IPQ'}
-          </button>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#7A7460', cursor: 'pointer' }}>Cancel</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
 // DAILY PACKING HISTORY — every change made to a single packing entry,
 // newest first: the original log, any Packing Done corrections (with
 // previous → new amount), and every IPQ hold / resume, each with who,
@@ -13869,7 +13674,7 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
 // deliberately separate from the Daily Packing table above — they act on
 // the whole batch, not on an individual packing entry.
 // ---------------------------------------------------------------------
-function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkCompleted, onDeleteBatch, onIpqClick }) {
+function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkCompleted, onDeleteBatch }) {
   const canManage = canManageProduction(user);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -13891,7 +13696,7 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <PackageSearch size={16} color={GOLD} />
-          <p style={{ fontFamily: "'Playfair Display', serif", color: INK, fontSize: 17, margin: 0 }}>Packing Overview</p>
+          <p style={{ fontFamily: "'Playfair Display', serif", color: INK, fontSize: 17, margin: 0 }}>Batches Overview</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ position: 'relative' }}>
@@ -13901,7 +13706,6 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 6, fontSize: 12 }}>
             <option value="All">All statuses</option>
             <option value="Active">Active</option>
-            <option value="IPQ">IPQ — Holding</option>
             <option value="Completed">Completed</option>
           </select>
         </div>
@@ -13928,28 +13732,20 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
             )}
             {filtered.map((b) => {
               const pct = b.batch_size ? Math.min(100, (b.total_packed / b.batch_size) * 100) : 0;
-              const pctLabel = Math.round(pct);
-              const isCompleted = b.status === 'Completed';
-              const isIpq = b.status === 'IPQ';
               const readyToComplete = b.status === 'Active' && Number(b.total_packed) >= Number(b.batch_size);
               return (
-                <tr key={b.id} style={{ borderTop: `1px solid ${LINE}`, background: isIpq ? '#FDF4F4' : 'transparent' }}>
+                <tr key={b.id} style={{ borderTop: `1px solid ${LINE}` }}>
                   <td style={{ padding: '13px 16px', color: INK, fontWeight: 500 }}>{b.product_name}</td>
                   <td style={{ padding: '13px 16px', color: '#7A7460' }}>{b.batch_number}</td>
                   <td style={{ padding: '13px 16px', color: '#7A7460' }}>{b.batch_size}</td>
                   <td style={{ padding: '13px 16px', color: '#7A7460' }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                      <span>{b.total_packed}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: pct >= 100 ? '#1F4B3F' : GOLD }}>
-                        {pctLabel}%
-                      </span>
-                    </div>
+                    {b.total_packed}
                     <div style={{ height: 4, background: LINE, borderRadius: 2, marginTop: 4, width: 80 }}>
-                      <div style={{ height: 4, width: `${pct}%`, background: pct >= 100 ? '#1F4B3F' : GOLD, borderRadius: 2 }} />
+                      <div style={{ height: 4, width: `${pct}%`, background: GOLD, borderRadius: 2 }} />
                     </div>
                   </td>
-                  <td style={{ padding: '13px 16px', color: isCompleted ? '#1F4B3F' : Number(b.remainingToPack) > 0 ? AMBER : '#1F4B3F', fontWeight: 600 }}>
-                    {isCompleted ? 'Fully packed' : `${b.remainingToPack} left to pack`}
+                  <td style={{ padding: '13px 16px', color: Number(b.remainingToPack) > 0 ? AMBER : '#1F4B3F', fontWeight: 600 }}>
+                    {b.remainingToPack} left to pack
                   </td>
                   <td style={{ padding: '13px 16px', color: '#1F4B3F', fontWeight: 600 }}>
                     {b.alreadySent}
@@ -13958,17 +13754,8 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
                     {b.remainingToSend} remaining
                   </td>
                   <td style={{ padding: '13px 16px' }}>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        padding: '3px 8px',
-                        borderRadius: 999,
-                        background: isCompleted ? '#E9F3EC' : isIpq ? '#FBEAEA' : '#FBF3E3',
-                        color: isCompleted ? '#1F4B3F' : isIpq ? IPQ_RED : AMBER,
-                        fontWeight: isIpq ? 600 : 400,
-                      }}
-                    >
-                      {isIpq ? 'IPQ — Holding' : b.status}
+                    <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, background: b.status === 'Completed' ? '#E9F3EC' : '#FBF3E3', color: b.status === 'Completed' ? '#1F4B3F' : AMBER }}>
+                      {b.status}
                     </span>
                   </td>
                   {canManage && (
@@ -13983,27 +13770,11 @@ function BatchesOverviewTable({ user, batches, onSendToWarehouse, onMarkComplete
                             <CheckCircle2 size={13} /> Mark Completed
                           </button>
                         )}
-                        {!isCompleted && (
-                          <button
-                            onClick={() => onIpqClick(b)}
-                            title={isIpq ? 'Resume this batch' : 'Put this batch on IPQ hold'}
-                            style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'white', border: `1px solid ${isIpq ? '#1F4B3F' : IPQ_RED}`, color: isIpq ? '#1F4B3F' : IPQ_RED, padding: '7px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
-                          >
-                            {isIpq ? <PlayCircle size={13} /> : <PauseCircle size={13} />}
-                            {isIpq ? 'Resume' : 'IPQ'}
-                          </button>
-                        )}
                         <button
                           onClick={() => onSendToWarehouse(b)}
-                          disabled={Number(b.remainingToSend) <= 0 || isIpq}
-                          title={
-                            isIpq
-                              ? 'This batch is on IPQ hold — resume it before sending to Warehouse'
-                              : Number(b.remainingToSend) <= 0
-                              ? (Number(b.total_packed) <= 0 ? 'Nothing packed yet for this batch' : 'Everything packed so far has already been sent')
-                              : `Send the ${b.remainingToSend} packs not yet sent`
-                          }
-                          style={{ display: 'flex', alignItems: 'center', gap: 6, background: Number(b.remainingToSend) > 0 && !isIpq ? INK : '#D8D2C0', color: 'white', border: 'none', padding: '7px 12px', borderRadius: 6, cursor: Number(b.remainingToSend) > 0 && !isIpq ? 'pointer' : 'not-allowed', fontSize: 12 }}
+                          disabled={Number(b.remainingToSend) <= 0}
+                          title={Number(b.remainingToSend) <= 0 ? (Number(b.total_packed) <= 0 ? 'Nothing packed yet for this batch' : 'Everything packed so far has already been sent') : `Send the ${b.remainingToSend} packs not yet sent`}
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, background: Number(b.remainingToSend) > 0 ? INK : '#D8D2C0', color: 'white', border: 'none', padding: '7px 12px', borderRadius: 6, cursor: Number(b.remainingToSend) > 0 ? 'pointer' : 'not-allowed', fontSize: 12 }}
                         >
                           <Truck size={13} /> Send to Warehouse
                         </button>
@@ -14166,7 +13937,6 @@ function ProductionInventoryPageInner({ user }) {
   const [packingModalOpen, setPackingModalOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null);
   const [ipqEntry, setIpqEntry] = useState(null);
-  const [ipqBatch, setIpqBatch] = useState(null);
   const [historyEntry, setHistoryEntry] = useState(null);
   const [sendToWarehouseBatch, setSendToWarehouseBatch] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
@@ -14485,7 +14255,6 @@ const ch3 = supabase
         onSendToWarehouse={(b) => setSendToWarehouseBatch(b)}
         onMarkCompleted={handleMarkCompleted}
         onDeleteBatch={handleDeleteBatch}
-        onIpqClick={(b) => setIpqBatch(b)}
       />
 
       {packingModalOpen && (
@@ -14503,14 +14272,6 @@ const ch3 = supabase
           entry={ipqEntry}
           onClose={() => setIpqEntry(null)}
           onSaved={loadEntries}
-        />
-      )}
-      {ipqBatch && (
-        <BatchIPQModal
-          user={user}
-          batch={ipqBatch}
-          onClose={() => setIpqBatch(null)}
-          onSaved={loadBatches}
         />
       )}
       {historyEntry && (
