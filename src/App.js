@@ -19405,7 +19405,16 @@ export default function App() {
       return;
     }
     const grouped = { riskAssessments: [], incidents: [], permits: [], ppeIssued: [], ppeWarnings: [], ppeFines: [] };
-    (data || []).forEach((r) => {
+    (data || []).forEach((row) => {
+      // hse_records stores these three fields as worker_name / issued_by /
+      // fine_amount (snake_case, matching the DB columns); the UI reads
+      // workerName / issuedBy / fineAmount (camelCase), so translate here.
+      const r = {
+        ...row,
+        workerName: row.worker_name,
+        issuedBy: row.issued_by,
+        fineAmount: row.fine_amount,
+      };
       if (grouped[r.category]) grouped[r.category].push(r);
     });
     setHse(grouped);
@@ -20049,7 +20058,18 @@ export default function App() {
 
   // ---- HSE CRUD -----------------------------------------------------------
   const handleAddHse = async (record) => {
-    const newRecord = { id: nextId('HSE'), ...record };
+    // hse_records' actual columns are worker_name / issued_by / fine_amount
+    // (snake_case) — the form works in camelCase, so translate before the
+    // insert, or PostgREST rejects the request (column not found) and the
+    // record is silently never saved.
+    const { workerName, issuedBy, fineAmount, ...rest } = record;
+    const newRecord = {
+      id: nextId('HSE'),
+      ...rest,
+      worker_name: workerName,
+      issued_by: issuedBy,
+      fine_amount: fineAmount === '' ? null : fineAmount,
+    };
     const { data, error } = await supabase
       .from('hse_records')
       .insert([newRecord])
@@ -20058,16 +20078,29 @@ export default function App() {
       alert('Failed to add HSE record: ' + error.message);
       return;
     }
+    const saved = {
+      ...data[0],
+      workerName: data[0].worker_name,
+      issuedBy: data[0].issued_by,
+      fineAmount: data[0].fine_amount,
+    };
     setHse((prev) => ({
       ...prev,
-      [record.category]: [data[0], ...(prev[record.category] || [])],
+      [record.category]: [saved, ...(prev[record.category] || [])],
     }));
   };
 
   const handleEditHse = async (recordId, record) => {
+    const { workerName, issuedBy, fineAmount, ...rest } = record;
+    const dbUpdate = {
+      ...rest,
+      worker_name: workerName,
+      issued_by: issuedBy,
+      fine_amount: fineAmount === '' ? null : fineAmount,
+    };
     const { error } = await supabase
       .from('hse_records')
-      .update(record)
+      .update(dbUpdate)
       .eq('id', recordId);
     if (error) {
       alert('Failed to update HSE record: ' + error.message);
