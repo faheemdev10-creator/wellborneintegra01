@@ -13562,6 +13562,13 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
     return true;
   }), [entries, statusFilter, dateFilter, search]);
 
+  // SPEED: draw only the first DP_PAGE rows; "All time" can be thousands.
+  // The CSV export below still uses the FULL filtered list.
+  const DP_PAGE = 50;
+  const [limit, setLimit] = useState(DP_PAGE);
+  useEffect(() => { setLimit(DP_PAGE); }, [search, statusFilter, dateFilter]);
+  const shown = useMemo(() => filtered.slice(0, limit), [filtered, limit]);
+
   const exportCsv = () => {
     csvExport(
       `daily-packing-${new Date().toISOString().slice(0, 10)}.csv`,
@@ -13639,7 +13646,7 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
             {filtered.length === 0 && (
               <tr><td colSpan={8} style={{ padding: 24, textAlign: 'center', color: '#9C9585' }}>No Daily Packing entries match this filter.</td></tr>
             )}
-            {filtered.map((e) => {
+            {shown.map((e) => {
               const batch = batchById[e.batch_id];
               const isIpq = e.status === 'IPQ';
               return (
@@ -13696,6 +13703,13 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
           </tbody>
         </table>
       </div>
+      {filtered.length > limit && (
+        <div className="wb-po-more">
+          <span>Showing {Math.min(limit, filtered.length)} of {filtered.length} entries</span>
+          <button type="button" onClick={() => setLimit((l) => l + DP_PAGE)}>Show {Math.min(DP_PAGE, filtered.length - limit)} more</button>
+          <button type="button" onClick={() => setLimit(filtered.length)}>Show all</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -13887,6 +13901,15 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
     return true;
   }), [batches, statusFilter, search]);
 
+  // SPEED: only the first PO_PAGE rows are drawn; the rest load on demand.
+  // Completed batches pile up over time, and drawing hundreds of rows
+  // (each with several chips, a progress bar and buttons) was the slow
+  // part of this table.
+  const PO_PAGE = 30;
+  const [limit, setLimit] = useState(PO_PAGE);
+  useEffect(() => { setLimit(PO_PAGE); }, [search, statusFilter]);
+  const shown = useMemo(() => filtered.slice(0, limit), [filtered, limit]);
+
   const counts = useMemo(() => {
     let done = 0;
     for (let i = 0; i < batches.length; i += 1) if (batches[i].status === 'Completed') done += 1;
@@ -13922,6 +13945,7 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
     flexShrink: 0,
     whiteSpace: 'nowrap',
     boxSizing: 'border-box',
+    width: '100%',
   };
   const th = { padding: '12px 10px', fontSize: 11, color: '#8A8370', fontWeight: 700, letterSpacing: '0.03em' };
   const stat = (color, bg) => ({ color, background: bg });
@@ -13963,14 +13987,14 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                 <th style={th}>Sent to Warehouse</th>
                 <th style={th}>Remaining to Send</th>
                 <th style={th}>Status</th>
-                {canManage && <th className="wb-po-actions-th" style={th}> </th>}
+                {canManage && <th style={th}> </th>}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
                 <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: '#9C9585' }}>No batches match this filter.</td></tr>
               )}
-              {filtered.map((b, idx) => {
+              {shown.map((b, idx) => {
                 const done = b.status === 'Completed';
                 const size = Number(b.batch_size) || 0;
                 const packed = Number(b.total_packed) || 0;
@@ -14053,30 +14077,32 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                       )}
                     </td>
                     {canManage && (
-                      <td className="wb-po-actions" style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap' }}>
-                          {b.status === 'Active' ? (
+                      <td style={{ padding: '10px 12px' }}>
+                        {/* Buttons are laid out in a neat two-column grid (not one long
+                            line), so the row stays narrow. They flow in order:
+                            Mark Completed | Send to Warehouse, then IPQ | Delete.
+                            Completed batches simply show Send | Delete. */}
+                        <div className="wb-po-actions-grid">
+                          {b.status === 'Active' && (
                             <button
                               onClick={() => onMarkCompleted(b)}
                               title={readyToComplete ? 'Mark this batch Completed' : `Still ${size - packed} packs left to pack — you can still mark it complete manually`}
                               className={`wb-po-btn ${readyToComplete ? 'wb-po-btn-complete-ready' : 'wb-po-btn-complete'}`}
-                              style={{ ...btnBase, width: 128 }}
+                              style={btnBase}
                             >
                               <CheckCircle2 size={13} /> Mark Completed
                             </button>
-                          ) : (
-                            <span aria-hidden="true" style={{ width: 128, flexShrink: 0 }} />
                           )}
                           <button
                             onClick={() => onSendToWarehouse(b)}
                             disabled={remainingToSend <= 0}
                             title={remainingToSend <= 0 ? (packed <= 0 ? 'Nothing packed yet for this batch' : 'Everything packed so far has already been sent') : `Send the ${b.remainingToSend} packs not yet sent`}
                             className="wb-po-btn wb-po-btn-send"
-                            style={{ ...btnBase, width: 146 }}
+                            style={btnBase}
                           >
                             <Truck size={13} /> Send to Warehouse
                           </button>
-                          {canIpq ? (
+                          {canIpq && (
                             <button
                               onClick={() => onIpqClick && onIpqClick(b)}
                               title={
@@ -14085,19 +14111,17 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                                   : `Put this batch's ${ip.logged} packing ${ip.logged === 1 ? 'entry' : 'entries'} on IPQ hold`
                               }
                               className={`wb-ipq-fx wb-ipq-btn ${onHold ? 'wb-ipq-btn-resume' : ''}`}
-                              style={{ width: 84, justifyContent: 'center', padding: '7px 8px', borderRadius: 8, fontSize: 11.5, boxSizing: 'border-box', flexShrink: 0 }}
+                              style={btnBase}
                             >
                               {onHold ? <PlayCircle size={13} /> : <PauseCircle size={13} />}
                               <span>{onHold ? 'Resume' : 'IPQ'}</span>
                             </button>
-                          ) : (
-                            <span aria-hidden="true" style={{ width: 84, flexShrink: 0 }} />
                           )}
                           <button
                             onClick={() => onDeleteBatch(b)}
                             title="Delete this batch"
                             className="wb-po-btn wb-po-btn-del"
-                            style={{ ...btnBase, width: 80 }}
+                            style={btnBase}
                           >
                             <Trash2 size={13} /> Delete
                           </button>
@@ -14110,6 +14134,13 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
             </tbody>
           </table>
         </div>
+        {filtered.length > limit && (
+          <div className="wb-po-more">
+            <span>Showing {Math.min(limit, filtered.length)} of {filtered.length} batches</span>
+            <button type="button" onClick={() => setLimit((l) => l + PO_PAGE)}>Show {Math.min(PO_PAGE, filtered.length - limit)} more</button>
+            <button type="button" onClick={() => setLimit(filtered.length)}>Show all</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -14989,16 +15020,17 @@ function PremiumStyles() {
       }
       @keyframes wb-po-ping { 0% { transform: scale(1); opacity: 0.7; } 75%, 100% { transform: scale(2.6); opacity: 0; } }
 
-      /* Actions column stays pinned to the right edge, so the buttons are
-         always reachable even when the table is wider than the screen and
-         has to scroll sideways. */
-      .wb-po-actions, .wb-po-actions-th {
-        position: sticky; right: 0; z-index: 1;
-        box-shadow: -8px 0 10px -9px rgba(10, 18, 32, 0.16);
+      /* Row actions: a tidy 2-column grid of equal-width buttons. */
+      .wb-po-actions-grid { display: grid; grid-template-columns: repeat(2, 146px); gap: 6px; }
+      .wb-po-more {
+        display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+        padding: 12px; font-size: 12px; color: #7A7460; background: #FCF9EE; border-top: 1px solid #E9E2D0;
       }
-      .wb-po-actions { background: white; transition: background 0.2s ease; }
-      .wb-po-actions-th { background: #F8F3E4; }
-      .wb-po-row:hover .wb-po-actions { background: #FBF6E8; }
+      .wb-po-more button {
+        background: white; border: 1px solid #E0D8C2; color: #5C5646; border-radius: 8px;
+        padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+      }
+      .wb-po-more button:hover { background: #F4EDD8; }
 
       .wb-po-btn { color: white; border: none; cursor: pointer; }
       .wb-po-btn-complete { background: linear-gradient(135deg, #B8923F, #E3C27A); box-shadow: 0 3px 10px rgba(201, 165, 92, 0.38); }
@@ -15023,7 +15055,6 @@ function PremiumStyles() {
         transform: translateX(-130%);
         animation: wb-ipq-sweep 2.6s ease-in-out infinite;
       }
-      .wb-ipq-fx svg { animation: wb-ipq-blink 1.9s ease-in-out infinite; }
       .wb-ipq-btn {
         display: inline-flex; align-items: center; gap: 5px;
         padding: 5px 11px 5px 9px; border-radius: 999px; border: none; cursor: pointer;
@@ -15043,7 +15074,7 @@ function PremiumStyles() {
 
       @media (prefers-reduced-motion: reduce) {
         .wb-po-row, .wb-po-stat, .wb-po-fill, .wb-po-fill-live::after, .wb-po-dot::after,
-        .wb-po-head-icon, .wb-ipq-fx, .wb-ipq-fx::before, .wb-ipq-fx svg, .wb-ipq-badge {
+        .wb-po-head-icon, .wb-ipq-fx, .wb-ipq-fx::before, .wb-ipq-badge {
           animation: none !important;
         }
       }
