@@ -2696,11 +2696,15 @@ function ProductionSnapshotCard({ onOpenProduction }) {
     return () => supabase.removeChannel(channel);
   }, [loadAll, debouncedLoadAll]);
 
-  const activeBatches = batches.filter((b) => b.status === 'Active').length;
-  const completedBatches = batches.filter((b) => b.status === 'Completed').length;
-  const ipqEntries = entries.filter((e) => e.status === 'IPQ').length;
-  const transfersToday = transfers.filter((t) => isToday(t.sent_at)).length;
-  const pendingTransfers = transfers.filter((t) => t.status === 'Pending').length;
+  // SPEED: memoized so this snapshot card (which lives on the Dashboard
+  // and re-renders often as other Dashboard widgets update) doesn't
+  // re-scan batches/entries/transfers every time — only when one of those
+  // three actually changes.
+  const activeBatches = useMemo(() => batches.filter((b) => b.status === 'Active').length, [batches]);
+  const completedBatches = useMemo(() => batches.filter((b) => b.status === 'Completed').length, [batches]);
+  const ipqEntries = useMemo(() => entries.filter((e) => e.status === 'IPQ').length, [entries]);
+  const transfersToday = useMemo(() => transfers.filter((t) => isToday(t.sent_at)).length, [transfers]);
+  const pendingTransfers = useMemo(() => transfers.filter((t) => t.status === 'Pending').length, [transfers]);
 
   const stats = [
     { label: 'Active batches', value: activeBatches, icon: Layers },
@@ -2820,8 +2824,16 @@ function ProductionSnapshotCard({ onOpenProduction }) {
             <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#B0AA96' }}>
               {e.created_by} ({e.created_dept}) · {formatDateTime(e.created_at)}
             </p>
+            {/* Why it's on hold, right on the snapshot — same reason typed
+                into the Mark as IPQ box on the full Packing Status page. */}
+            {e.status === 'IPQ' && e.ipq_reason && (
+              <p style={{ margin: '2px 0 0', fontSize: '11px', color: IPQ_RED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {e.ipq_reason}
+              </p>
+            )}
           </div>
           <span
+            title={e.status === 'IPQ' && e.ipq_reason ? e.ipq_reason : undefined}
             style={{
               fontSize: '11px',
               padding: '3px 8px',
@@ -2830,6 +2842,7 @@ function ProductionSnapshotCard({ onOpenProduction }) {
               color: e.status === 'IPQ' ? IPQ_RED : '#1F4B3F',
               fontWeight: 600,
               whiteSpace: 'nowrap',
+              flexShrink: 0,
             }}
           >
             {e.status === 'IPQ' ? 'IPQ' : `${e.packing_done} packs`}
@@ -3607,6 +3620,17 @@ function DocDrawer({
 
   const current = currentDeptOf(doc);
   const isIpq = doc.status === 'IPQ';
+  // The reason typed in when this was marked IPQ isn't stored as its own
+  // field for documents — it's baked into that history entry's action
+  // text ("Marked as IPQ (Holding) — <reason>"). Pull the reason back out
+  // of the most recent IPQ history line so the banner can show it plainly
+  // instead of making someone open History to find out why.
+  const lastIpqHistory = isIpq
+    ? [...(doc.history || [])].reverse().find((h) => h.ipq === true)
+    : null;
+  const ipqNote = lastIpqHistory && lastIpqHistory.action.includes(' — ')
+    ? lastIpqHistory.action.slice(lastIpqHistory.action.indexOf(' — ') + 3)
+    : '';
   const canAct =
     (doc.status === 'In Progress' || doc.status === 'IPQ') &&
     (canSeeEverything(user) || user.dept === current);
@@ -3691,6 +3715,13 @@ function DocDrawer({
                 <p style={{ color: '#7A3A3A', fontSize: '12px', margin: '3px 0 0' }}>
                   It's paused with {current} and won't move until it's resumed.
                 </p>
+                {/* The note typed in when it was put on hold, e.g. "Count
+                    under review" — pulled from its own history line above. */}
+                {ipqNote && (
+                  <p style={{ color: IPQ_RED, fontSize: '12px', fontWeight: 600, margin: '8px 0 0', paddingTop: '8px', borderTop: `1px solid ${IPQ_RED}` }}>
+                    Note: {ipqNote}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -13666,9 +13697,21 @@ function DailyPackingTable({ user, entries, batches, onAddClick, onEditClick, on
                   <td style={{ padding: '13px 16px', color: '#7A7460' }}>{batch ? batch.batch_size : '—'}</td>
                   <td style={{ padding: '13px 16px', color: '#7A7460', fontWeight: 600 }}>{e.packing_done}</td>
                   <td style={{ padding: '13px 16px' }}>
-                    <span className={isIpq ? 'wb-ipq-badge' : undefined} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, background: isIpq ? '#FBEAEA' : '#E9F3EC', color: isIpq ? IPQ_RED : '#1F4B3F', fontWeight: 600 }}>
+                    <span
+                      className={isIpq ? 'wb-ipq-badge' : undefined}
+                      title={isIpq && e.ipq_reason ? e.ipq_reason : undefined}
+                      style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, background: isIpq ? '#FBEAEA' : '#E9F3EC', color: isIpq ? IPQ_RED : '#1F4B3F', fontWeight: 600 }}
+                    >
                       {isIpq ? 'IPQ — Holding' : 'Logged'}
                     </span>
+                    {/* The reason typed into the "Mark as IPQ" box, shown right
+                        under the badge — no more digging through History to
+                        see why an entry is on hold. */}
+                    {isIpq && e.ipq_reason && (
+                      <p style={{ margin: '4px 0 0', fontSize: 11, color: IPQ_RED, maxWidth: 220, overflowWrap: 'anywhere' }}>
+                        {e.ipq_reason}
+                      </p>
+                    )}
                   </td>
                   <td style={{ padding: '13px 16px', color: '#7A7460' }}>{e.created_by} <span style={{ color: '#B0AA96' }}>({e.created_dept})</span></td>
                   <td style={{ padding: '13px 16px', color: '#7A7460', whiteSpace: 'nowrap' }}>{formatDateTime(e.created_at)}</td>
@@ -13916,15 +13959,25 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
     return { total: batches.length, done, active: batches.length - done };
   }, [batches]);
 
-  // How many packing entries each batch has, and how many are on IPQ
-  // hold — drives the IPQ / Resume button and the red "Active · IPQ" badge.
+  // How many packing entries each batch has, how many are on IPQ hold, and
+  // the reason(s) typed in for those holds — drives the IPQ / Resume
+  // button, the red "Active · IPQ" badge, and the note shown under it.
+  // A batch can have more than one entry on hold with different reasons
+  // (e.g. put on hold, resumed, then held again for something else), so
+  // reasons are collected as a de-duplicated list, newest first.
   const ipqByBatch = useMemo(() => {
     const m = {};
     for (let i = 0; i < entries.length; i += 1) {
       const e = entries[i];
-      if (!m[e.batch_id]) m[e.batch_id] = { held: 0, logged: 0 };
-      if (e.status === 'IPQ') m[e.batch_id].held += 1;
-      else m[e.batch_id].logged += 1;
+      if (!m[e.batch_id]) m[e.batch_id] = { held: 0, logged: 0, reasons: [] };
+      if (e.status === 'IPQ') {
+        m[e.batch_id].held += 1;
+        if (e.ipq_reason && !m[e.batch_id].reasons.includes(e.ipq_reason)) {
+          m[e.batch_id].reasons.push(e.ipq_reason);
+        }
+      } else {
+        m[e.batch_id].logged += 1;
+      }
     }
     return m;
   }, [entries]);
@@ -14074,14 +14127,27 @@ function BatchesOverviewTable({ user, batches, entries = [], onSendToWarehouse, 
                         {b.remainingToSend} remaining
                       </span>
                     </td>
-                    <td data-label="Status" style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
+                    <td data-label="Status" style={{ padding: '12px 10px', whiteSpace: onHold && ip.reasons.length > 0 ? 'normal' : 'nowrap' }}>
                       {done ? (
                         <span className="wb-po-status wb-po-status-done"><CheckCircle2 size={12} /> {b.status}</span>
                       ) : (
                         onHold ? (
-                          <span className="wb-po-status wb-ipq-badge" style={{ color: IPQ_RED, background: 'linear-gradient(135deg, #FDECEC, #F8D4D4)' }}>
-                            <PauseCircle size={12} /> {b.status} · IPQ
-                          </span>
+                          <>
+                            <span
+                              className="wb-po-status wb-ipq-badge"
+                              title={ip.reasons.length > 0 ? ip.reasons.join(' · ') : undefined}
+                              style={{ color: IPQ_RED, background: 'linear-gradient(135deg, #FDECEC, #F8D4D4)' }}
+                            >
+                              <PauseCircle size={12} /> {b.status} · IPQ
+                            </span>
+                            {/* The reason(s) entered when this batch was put on
+                                hold — visible here instead of only in History. */}
+                            {ip.reasons.length > 0 && (
+                              <p style={{ margin: '4px 0 0', fontSize: 11, color: IPQ_RED, maxWidth: 200, overflowWrap: 'anywhere' }}>
+                                {ip.reasons.join(' · ')}
+                              </p>
+                            )}
+                          </>
                         ) : (
                           <span className="wb-po-status wb-po-status-active"><i className="wb-po-dot" /> {b.status}</span>
                         )
@@ -14395,16 +14461,31 @@ const ch3 = supabase
   // above every early return keeps the hook count identical on all paths.
   // It is safe to run unconditionally: `batches` and `transfers` both start
   // as [], so on the no-access path this just maps an empty array.
+  // SPEED: this used to re-scan the ENTIRE transfers array once per batch
+  // (batches.map -> transfers.filter inside it), so with B batches and T
+  // transfers it did B*T work every time either array changed — the more
+  // batches and transfer history piled up, the slower Floor Status got.
+  // Grouping transfers by batch_id first turns that into a single O(B+T)
+  // pass: one walk over transfers to build the totals, one walk over
+  // batches to attach them.
+  const sentByBatch = useMemo(() => {
+    const m = {};
+    for (let i = 0; i < transfers.length; i += 1) {
+      const t = transfers[i];
+      if (t.status === 'Rejected') continue;
+      m[t.batch_id] = (m[t.batch_id] || 0) + Number(t.quantity || 0);
+    }
+    return m;
+  }, [transfers]);
+
   const batchesWithSendInfo = useMemo(() => {
     return batches.map((b) => {
-      const alreadySent = transfers
-        .filter((t) => t.batch_id === b.id && t.status !== 'Rejected')
-        .reduce((sum, t) => sum + Number(t.quantity || 0), 0);
+      const alreadySent = sentByBatch[b.id] || 0;
       const remainingToSend = Math.max(Number(b.total_packed) - alreadySent, 0);
       const remainingToPack = Math.max(Number(b.batch_size) - Number(b.total_packed), 0);
       return { ...b, alreadySent, remainingToSend, remainingToPack };
     });
-  }, [batches, transfers]);
+  }, [batches, sentByBatch]);
 
   if (!canSeeProductionInventory(user)) {
     return (
@@ -14537,14 +14618,29 @@ const ch3 = supabase
     });
   };
 
-  const batchForEntry = (entry) => batches.find((b) => b.id === entry.batch_id);
+  // SPEED: batchById reuses the same map built for batchesWithSendInfo's
+  // lookups elsewhere in this file — batchForEntry used to do a linear
+  // batches.find() every time the History modal opened, rescanning every
+  // batch. A map makes that a constant-time lookup instead.
+  const batchById = useMemo(() => {
+    const m = {};
+    for (let i = 0; i < batches.length; i += 1) m[batches[i].id] = batches[i];
+    return m;
+  }, [batches]);
+  const batchForEntry = (entry) => batchById[entry.batch_id];
 
   const canSeeWarehouseFeatures = canManage || canReceive;
 
-  const activeIpqEntries = entries.filter((e) => e.status === 'IPQ').length;
-  const activeBatches = batches.filter((b) => b.status === 'Active').length;
-  const completedBatches = batches.filter((b) => b.status === 'Completed').length;
-  const transfersToday = transfers.filter((t) => isToday(t.sent_at)).length;
+  // SPEED: these four counts used to be plain .filter().length calls sitting
+  // in the component body, which means every one of them re-scanned the
+  // full entries/batches/transfers arrays on EVERY render of this page —
+  // including renders caused by something unrelated, like opening a modal
+  // or typing in a search box elsewhere on the page. useMemo means they
+  // only recompute when the underlying data actually changes.
+  const activeIpqEntries = useMemo(() => entries.filter((e) => e.status === 'IPQ').length, [entries]);
+  const activeBatches = useMemo(() => batches.filter((b) => b.status === 'Active').length, [batches]);
+  const completedBatches = useMemo(() => batches.filter((b) => b.status === 'Completed').length, [batches]);
+  const transfersToday = useMemo(() => transfers.filter((t) => isToday(t.sent_at)).length, [transfers]);
 
   return (
     <div className="wb-prod-page" style={{ padding: '28px 32px' }}>
