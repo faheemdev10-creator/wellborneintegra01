@@ -6527,6 +6527,49 @@ function RegisterPostPreview({ form, editingId, existingItem }) {
   );
 }
 
+// Every product — existing stock and anything added from here on — gets
+// its own scannable QR code, generated on the fly from the item's own
+// data (id/name/batch/qty). Nothing is stored for this: the code is
+// just an image whose URL encodes the payload, from a free public QR
+// image API, so it needs no new Supabase column, no library, and no
+// backfill — it "exists" for every item automatically, past and
+// future, purely because it's derived at render time. Scanning it with
+// any phone camera (no app needed) shows the item's name, batch, qty
+// and ID as plain text.
+function itemQrPayload(item) {
+  return [
+    item.name || 'Unnamed item',
+    `Batch: ${item.batch || '—'}`,
+    `Qty: ${item.qty ?? '—'}${item.unit ? ' ' + item.unit : ''}`,
+    `Category: ${item.category || '—'}${item.subcategory ? ' — ' + item.subcategory : ''}`,
+    `ID: ${item.id}`,
+  ].join('\n');
+}
+
+function ItemQRCode({ item, size = 40 }) {
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=0&data=${encodeURIComponent(itemQrPayload(item))}`;
+  return (
+    <img
+      src={src}
+      alt={`QR code for ${item.name || 'item'}`}
+      width={size}
+      height={size}
+      loading="lazy"
+      style={{
+        display: 'block',
+        borderRadius: '5px',
+        border: `1px solid ${LINE}`,
+        background: 'white',
+        flexShrink: 0,
+      }}
+      // A handful of items typed with no name yet, or the free QR API
+      // being briefly unreachable, shouldn't break the row — hide the
+      // broken-image icon rather than show a visibly failed <img>.
+      onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+    />
+  );
+}
+
 function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete, onOpenRegister }) {
   // ---- "WHERE I LEFT OFF" -------------------------------------------
   // This component fully unmounts whenever the app switches to a
@@ -6609,8 +6652,7 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
     const loadReceived = async () => {
       const { data, error } = await supabase
         .from('warehouse_transfers')
-        .select('id, quantity, status, sent_at')
-        .eq('status', 'Received');
+        .select('id, product_name, batch_number, quantity, status, sent_by, sent_at, received_by, received_at, rejected_reason');
       if (!error && active) setReceivedTransfers(data || []);
     };
     loadReceived();
@@ -6623,12 +6665,11 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
       supabase.removeChannel(channel);
     };
   }, []);
-  const receivedFromProduction = receivedTransfers.reduce(
-    (sum, t) => sum + Number(t.quantity || 0),
-    0
-  );
+  const receivedFromProduction = receivedTransfers
+    .filter((t) => t.status === 'Received')
+    .reduce((sum, t) => sum + Number(t.quantity || 0), 0);
   const receivedFromProductionToday = receivedTransfers
-    .filter((t) => isToday(t.sent_at))
+    .filter((t) => t.status === 'Received' && isToday(t.sent_at))
     .reduce((sum, t) => sum + Number(t.quantity || 0), 0);
 
   const isRawMaterial = category === 'Raw Material';
@@ -7116,6 +7157,12 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
         receivedToday={receivedFromProductionToday}
         expiringSoon={vaultExpiringSoon}
       />
+      {/* Same "Warehouse Transfers" history list already shown on the
+          Packing Status page (TransfersHistoryPanel, defined above) —
+          repeated here too so Warehouse doesn't have to leave the
+          Inventory page to see what's already come in (or been
+          rejected) from Production, not just the live pending queue. */}
+      <TransfersHistoryPanel transfers={receivedTransfers} />
       <div
         style={{
           display: 'flex',
@@ -8049,6 +8096,7 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
         >
           <thead>
             <tr style={{ background: PAPER, textAlign: 'left' }}>
+              <th style={{ padding: '12px 10px', fontSize: '11px', color: '#8A8370' }}>QR</th>
               <th style={{ padding: '12px 16px', fontSize: '11px', color: '#8A8370' }}>Item Name</th>
               <th style={{ padding: '12px 16px', fontSize: '11px', color: '#8A8370' }}>Batch No.</th>
               <th style={{ padding: '12px 16px', fontSize: '11px', color: '#8A8370' }}>MFG Month</th>
@@ -8070,7 +8118,7 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
             {visible.length === 0 && (
               <tr>
                 <td
-                  colSpan={(canManage ? 7 : 6) + (category === 'Finished Goods' ? 2 : 0)}
+                  colSpan={(canManage ? 8 : 7) + (category === 'Finished Goods' ? 2 : 0)}
                   style={{
                     padding: '24px 20px',
                     color: '#9C9585',
@@ -8100,6 +8148,9 @@ function InventoryPage({ user, inventory: allInventory, onAdd, onEdit, onDelete,
                   className="wb-inv-row"
                   style={{ borderTop: `1px solid ${LINE}`, cursor: 'pointer' }}
                 >
+                  <td style={{ padding: '8px 10px' }} onClick={(e) => e.stopPropagation()}>
+                    <ItemQRCode item={item} />
+                  </td>
                   <td style={{ padding: '13px 16px', color: INK, fontWeight: 500 }}>
                     {item.name}
                     {Array.isArray(item.history) && item.history.length > 0 && (
