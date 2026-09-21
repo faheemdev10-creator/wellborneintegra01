@@ -65,6 +65,10 @@ import {
   MicOff,
   Maximize2,
   Minimize2,
+  HardHat,
+  Banknote,
+  Siren,
+  UserCheck,
 } from 'lucide-react';
 
 const INK = '#0A1220';
@@ -8381,12 +8385,14 @@ function HSEHero({ hse }) {
   const highRisk = (hse.riskAssessments || []).filter((r) => r.level === 'High').length;
   const incidentsCount = (hse.incidents || []).length;
   const permitsCount = (hse.permits || []).length;
+  const finesCount = (hse.ppeFines || []).length;
 
   const figures = [
     { label: 'Open items', value: open, icon: ClipboardList },
     { label: 'High risk', value: highRisk, icon: AlertTriangle, alert: highRisk > 0 },
     { label: 'Incidents logged', value: incidentsCount, icon: Zap },
     { label: 'Active permits', value: permitsCount, icon: Stamp },
+    { label: 'PPE fines issued', value: finesCount, icon: Banknote, alert: finesCount > 0 },
   ];
 
   const floatIcons = [
@@ -8446,6 +8452,17 @@ const HSE_TABS = [
   { key: 'riskAssessments', label: 'Risk Assessments', icon: ClipboardList },
   { key: 'incidents', label: 'Incidents', icon: AlertTriangle },
   { key: 'permits', label: 'Permits to Work', icon: Stamp },
+  { key: 'ppe', label: 'PPE & Compliance', icon: HardHat },
+];
+
+// The three record categories that live inside the "PPE & Compliance" tab.
+// Each has its own icon, colour accent and "+ Add" action, but all three
+// are stored in the same hse_records table as everything else — just
+// under their own `category` value.
+const PPE_SECTIONS = [
+  { category: 'ppeIssued', label: 'PPE Issued', addLabel: 'PPE Issued', icon: HardHat, accent: '#1F6B52', softBg: '#E3F5EC' },
+  { category: 'ppeWarnings', label: 'Warnings', addLabel: 'Warning', icon: Siren, accent: '#8C5A1E', softBg: '#FBEBC8' },
+  { category: 'ppeFines', label: 'Fines', addLabel: 'Fine', icon: Banknote, accent: IPQ_RED, softBg: '#FBEAEA' },
 ];
 
 const HSE_BLANK_FORM = {
@@ -8457,6 +8474,10 @@ const HSE_BLANK_FORM = {
   status: 'Open',
   type: '',
   date: '',
+  category: '',
+  workerName: '',
+  issuedBy: '',
+  fineAmount: '',
 };
 
 // Visible to every department, but only HSE can add, edit or remove
@@ -8470,8 +8491,18 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
   const [form, setForm] = useState(HSE_BLANK_FORM);
   const canManage = user.dept === 'HSE';
 
-  const startAdd = () => {
-    setForm({ ...HSE_BLANK_FORM, date: new Date().toISOString().slice(0, 10) });
+  // startAdd takes an explicit category so the three PPE sections (Issued /
+  // Warnings / Fines) — which all live under the single "PPE & Compliance"
+  // tab — can each open the form pre-set to their own category. Every other
+  // tab just calls startAdd() with no argument, which falls back to `tab`
+  // exactly as before.
+  const startAdd = (category = tab) => {
+    setForm({
+      ...HSE_BLANK_FORM,
+      category,
+      date: new Date().toISOString().slice(0, 10),
+      issuedBy: category === 'ppeIssued' || category === 'ppeWarnings' || category === 'ppeFines' ? user.name : '',
+    });
     setEditingId(null);
     setFormOpen(true);
   };
@@ -8482,9 +8513,14 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
     setFormOpen(true);
   };
 
+  // The category now travels on `form.category` (set by startAdd/startEdit)
+  // instead of always being read from `tab` — needed because the PPE tab
+  // holds three different categories at once.
+  const activeCategory = form.category || tab;
+
   const submit = () => {
     if (!form.title) return;
-    const payload = { ...form, category: tab };
+    const payload = { ...form, category: activeCategory };
     if (editingId) {
       onEdit(editingId, payload);
     } else {
@@ -8515,8 +8551,8 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
             fontSize: '12px',
           }}
         >
-          <Eye size={13} /> View only — risk assessments, incidents and
-          permits are maintained by the HSE department.
+          <Eye size={13} /> View only — risk assessments, incidents,
+          permits and PPE &amp; compliance records are maintained by the HSE department.
         </div>
       )}
       <div
@@ -8554,7 +8590,7 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
             </button>
           ))}
         </div>
-        {canManage && (
+        {canManage && tab !== 'ppe' && (
           <button
             onClick={startAdd}
             className="wb-btn wb-btn-gold"
@@ -8591,7 +8627,12 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
           }}
         >
           <input
-            placeholder="Title"
+            placeholder={
+              activeCategory === 'ppeIssued' ? 'PPE items issued (e.g. Mask & Gloves)' :
+              activeCategory === 'ppeWarnings' ? 'Reason for warning (e.g. Not wearing mask during inspection)' :
+              activeCategory === 'ppeFines' ? 'Reason for fine' :
+              'Title'
+            }
             value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
             style={{
@@ -8600,16 +8641,48 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
               borderRadius: '6px',
             }}
           />
-          <input
-            placeholder="Area / location"
-            value={form.area}
-            onChange={(e) => setForm({ ...form, area: e.target.value })}
-            style={{
-              padding: '8px',
-              border: `1px solid ${LINE}`,
-              borderRadius: '6px',
-            }}
-          />
+          {(activeCategory === 'ppeIssued' || activeCategory === 'ppeWarnings' || activeCategory === 'ppeFines') && (
+            <>
+              <input
+                placeholder="Worker name"
+                value={form.workerName}
+                onChange={(e) => setForm({ ...form, workerName: e.target.value })}
+                style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
+              />
+              <input
+                placeholder="Issued by (HSE Officer)"
+                value={form.issuedBy}
+                onChange={(e) => setForm({ ...form, issuedBy: e.target.value })}
+                style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
+              />
+            </>
+          )}
+          {activeCategory === 'ppeFines' && (
+            <>
+              <input
+                placeholder="Fine amount"
+                type="number"
+                value={form.fineAmount}
+                onChange={(e) => setForm({ ...form, fineAmount: e.target.value })}
+                style={{ padding: '8px', border: `1px solid ${LINE}`, borderRadius: '6px' }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#FBEAEA', border: `1px solid ${IPQ_RED}`, borderRadius: '6px', padding: '8px 10px', color: IPQ_RED, fontSize: '12px', fontWeight: 600 }}>
+                <Banknote size={13} /> This fine cannot be waived under any circumstances.
+              </div>
+            </>
+          )}
+          {activeCategory !== 'ppeIssued' && activeCategory !== 'ppeWarnings' && activeCategory !== 'ppeFines' && (
+            <input
+              placeholder="Area / location"
+              value={form.area}
+              onChange={(e) => setForm({ ...form, area: e.target.value })}
+              style={{
+                padding: '8px',
+                border: `1px solid ${LINE}`,
+                borderRadius: '6px',
+              }}
+            />
+          )}
           <input
             type="date"
             value={form.date}
@@ -8738,101 +8811,216 @@ function HSEPage({ user, hse, onAdd, onEdit, onDelete }) {
         </div>
       )}
 
-      <div className="wb-hse-grid">
-        {records.length === 0 && (
-          <p style={{ color: '#9C9585', fontSize: '14px' }}>
-            No records yet.
-          </p>
-        )}
-        {records.map((r) => (
-          <div
-            key={r.id}
-            className="wb-card"
-            style={{
-              background: 'white',
-              border: `1px solid ${LINE}`,
-              borderRadius: '10px',
-              padding: '18px',
-            }}
-          >
+      {tab === 'ppe' ? (
+        <PpeComplianceSection
+          hse={hse}
+          canManage={canManage}
+          onAddClick={startAdd}
+          onEditClick={startEdit}
+          onDelete={onDelete}
+        />
+      ) : (
+        <div className="wb-hse-grid">
+          {records.length === 0 && (
+            <p style={{ color: '#9C9585', fontSize: '14px' }}>
+              No records yet.
+            </p>
+          )}
+          {records.map((r) => (
             <div
+              key={r.id}
+              className="wb-card"
               style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                marginBottom: '8px',
+                background: 'white',
+                border: `1px solid ${LINE}`,
+                borderRadius: '10px',
+                padding: '18px',
               }}
             >
-              <span style={{ color: '#9C9585', fontSize: '12px' }}>{r.id}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {r.level && <RiskBadge level={r.level} />}
-                {!r.level && r.severity && (
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      color: '#7A4A1E',
-                      border: '1px solid #7A4A1E',
-                      borderRadius: '4px',
-                      padding: '1px 6px',
-                    }}
-                  >
-                    {r.severity}
-                  </span>
-                )}
-                {r.status && <StatusPill status={r.status} />}
-                {canManage && (
-                  <>
-                    <button
-                      onClick={() => startEdit(r)}
-                      title="Edit"
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: '8px',
+                }}
+              >
+                <span style={{ color: '#9C9585', fontSize: '12px' }}>{r.id}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {r.level && <RiskBadge level={r.level} />}
+                  {!r.level && r.severity && (
+                    <span
                       style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#5C5646',
-                        cursor: 'pointer',
-                        display: 'flex',
+                        fontSize: '11px',
+                        color: '#7A4A1E',
+                        border: '1px solid #7A4A1E',
+                        borderRadius: '4px',
+                        padding: '1px 6px',
                       }}
                     >
-                      <Pencil size={13} />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (window.confirm(`Delete "${r.title}"?`)) {
-                          onDelete(r.id);
-                        }
-                      }}
-                      title="Delete"
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#8A2E2E',
-                        cursor: 'pointer',
-                        display: 'flex',
-                      }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </>
-                )}
+                      {r.severity}
+                    </span>
+                  )}
+                  {r.status && <StatusPill status={r.status} />}
+                  {canManage && (
+                    <>
+                      <button
+                        onClick={() => startEdit(r)}
+                        title="Edit"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#5C5646',
+                          cursor: 'pointer',
+                          display: 'flex',
+                        }}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Delete "${r.title}"?`)) {
+                            onDelete(r.id);
+                          }
+                        }}
+                        title="Delete"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#8A2E2E',
+                          cursor: 'pointer',
+                          display: 'flex',
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
+              <p
+                style={{
+                  color: INK,
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  margin: 0,
+                }}
+              >
+                {r.title}
+              </p>
+              <p
+                style={{ color: '#7A7460', fontSize: '12px', margin: '4px 0 0' }}
+              >
+                {r.area} {r.type ? `· ${r.type}` : ''} · {r.date}
+              </p>
             </div>
-            <p
-              style={{
-                color: INK,
-                fontSize: '14px',
-                fontWeight: 500,
-                margin: 0,
-              }}
-            >
-              {r.title}
-            </p>
-            <p
-              style={{ color: '#7A7460', fontSize: '12px', margin: '4px 0 0' }}
-            >
-              {r.area} {r.type ? `· ${r.type}` : ''} · {r.date}
-            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// PPE & COMPLIANCE — three stacked blocks inside the HSE page's "PPE &
+// Compliance" tab: PPE Issued (who was given a mask/gloves and by whom),
+// Warnings, and Fines. Each block has its own "+ Add" button (wired to
+// HSEPage's startAdd(category)) and its own compact list. Fines always
+// carry a "Not waivable" marker — the policy is that a fine logged here
+// can never be waived, so the UI never offers a way to.
+// ---------------------------------------------------------------------
+function PpeComplianceSection({ hse, canManage, onAddClick, onEditClick, onDelete }) {
+  return (
+    <div style={{ display: 'grid', gap: '20px' }}>
+      {PPE_SECTIONS.map((section) => {
+        const records = hse[section.category] || [];
+        return (
+          <div
+            key={section.category}
+            className="wb-card"
+            style={{ background: 'white', border: `1px solid ${LINE}`, borderRadius: '12px', padding: '18px' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', borderRadius: '8px', background: section.softBg }}>
+                  <section.icon size={15} color={section.accent} />
+                </span>
+                <p style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: '17px', color: INK }}>{section.label}</p>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: section.accent, background: section.softBg, borderRadius: '999px', padding: '2px 9px' }}>
+                  {records.length}
+                </span>
+              </div>
+              {canManage && (
+                <button
+                  onClick={() => onAddClick(section.category)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', background: section.accent, color: 'white', border: 'none', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                >
+                  <Plus size={13} /> Add {section.addLabel}
+                </button>
+              )}
+            </div>
+
+            {records.length === 0 && (
+              <p style={{ color: '#9C9585', fontSize: '13px', margin: 0 }}>No records yet.</p>
+            )}
+
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {records.map((r) => (
+                <div
+                  key={r.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    background: PAPER,
+                    border: `1px solid ${LINE}`,
+                    borderRadius: '8px',
+                    padding: '10px 12px',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: '13px', color: INK, fontWeight: 600 }}>
+                      {r.title}
+                    </p>
+                    <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#7A7460' }}>
+                      <UserCheck size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '3px' }} />
+                      {r.workerName || '—'}
+                      {r.issuedBy ? ` · Issued by ${r.issuedBy}` : ''}
+                      {' · '}{r.date}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                    {section.category === 'ppeFines' && (
+                      <>
+                        {r.fineAmount && (
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: IPQ_RED }}>{r.fineAmount}</span>
+                        )}
+                        <span style={{ fontSize: '10px', fontWeight: 700, color: IPQ_RED, background: '#FBEAEA', border: `1px solid ${IPQ_RED}`, borderRadius: '999px', padding: '2px 8px' }}>
+                          Not Waivable
+                        </span>
+                      </>
+                    )}
+                    {canManage && (
+                      <>
+                        <button onClick={() => onEditClick(r)} title="Edit" style={{ background: 'none', border: 'none', color: '#5C5646', cursor: 'pointer', display: 'flex' }}>
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          onClick={() => { if (window.confirm(`Delete this ${section.label.toLowerCase()} record for ${r.workerName || 'this worker'}?`)) onDelete(r.id); }}
+                          title="Delete"
+                          style={{ background: 'none', border: 'none', color: '#8A2E2E', cursor: 'pointer', display: 'flex' }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -18780,6 +18968,9 @@ export default function App() {
     riskAssessments: [],
     incidents: [],
     permits: [],
+    ppeIssued: [],
+    ppeWarnings: [],
+    ppeFines: [],
   });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Set when Warehouse Inventory's "Open Register" shortcut is clicked —
@@ -19213,7 +19404,7 @@ export default function App() {
       console.log('Error loading HSE records:', error.message);
       return;
     }
-    const grouped = { riskAssessments: [], incidents: [], permits: [] };
+    const grouped = { riskAssessments: [], incidents: [], permits: [], ppeIssued: [], ppeWarnings: [], ppeFines: [] };
     (data || []).forEach((r) => {
       if (grouped[r.category]) grouped[r.category].push(r);
     });
